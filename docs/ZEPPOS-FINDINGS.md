@@ -111,8 +111,11 @@ faces' `Preview.png` is an uncompressed, color-mapped TGA with:
 - a **46-byte ID block**: `b"SOMHD\x01" + b"\x00"*40`,
 - a **256 × 32-bit BGRA** colormap, then 8-bit palette indices (top-left origin).
 
-**Fix:** Encode `assets/Preview.png` in exactly that format (keep the `.png` name). The current
-`Preview.png` is already a TGA full-render of the face.
+**Fix:** When **packaging by hand** (the converter's path), encode `Preview.png` in exactly that
+format (keep the `.png` name). When **building with Zeus**, this is automatic — provide a plain
+PNG cover and `zeus build` resizes/encodes it (and converts every other PNG asset to TGA too),
+so the source tree stays plain PNG. This repo builds with Zeus, so `assets/balance2/Preview.png`
+is a plain PNG.
 
 ---
 
@@ -143,6 +146,29 @@ layout:
 - **Temperature unit** (°C/°F) and **distance unit** (km/mi) follow the watch locale; the
   distance **decimal point** (`dot_image: '0034.png'`) shows or not depending on the unit.
 - **AM/PM** is only meaningful in 12-hour mode (finding #4); it's hidden in 24-hour mode.
+
+---
+
+## 10. Building with the official `zeus` CLI
+
+Packing this face with `zeus build` (v1.9.x) surfaced several project-layout requirements:
+
+- **`app.json` source form uses `targets`.** A Zeus *source* project nests `module` /
+  `platforms` / `designWidth` under `targets.<name>` (e.g. `targets.balance2`); Zeus flattens
+  that into the top-level `module`/`platforms` form in the built *device* package. (So the flat
+  app.json a hand-converter emits is actually Zeus's *output* form, which is why a hand-zipped
+  package runs directly on the watch.)
+- **Assets live under a per-target subfolder** `assets/<target>/` (matching the target name),
+  not flat in `assets/`. With the wrong layout the asset step fails to find the files.
+- **The target/device must be currently supported.** Zeus refuses unknown `deviceSource`s
+  ("Unsupported targets … removed → Please set at least one package"). Balance 2 is
+  `Lyon`/`LyonWN`/`LyonW` = deviceSource 9568512/13/15, round 480×480, API ≤ 4.2. The device
+  list is fetched from Zepp and cached at `~/.zepp/.zeus_devices`.
+- **The PNG→TGA converter rejects degenerate images** ("image size is too small"). Drop unused
+  / 0-dimension sprites before building (this is why the 24 leftover sprites were pruned).
+- **Pre-compiled `index.js` is accepted.** Our `DeviceRuntimeCore.WatchFace(...)`-wrapped file
+  passes ROLLUP + QJSC unchanged; Zeus compiles it to QuickJS bytecode (`index.bin`).
+- **No login needed** for a local `zeus build`; login is only for publish / device preview.
 
 ---
 

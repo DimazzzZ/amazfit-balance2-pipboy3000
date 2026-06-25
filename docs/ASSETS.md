@@ -1,10 +1,15 @@
 # Asset index map
 
-All images live in `assets/`. They are numbered PNGs (`NNNN.png`), in **indexed-P** mode with
-1-byte transparency (palette index 0 = transparent). The present ranges are **`0000`–`0105`**
-and **`0200`–`0223`**, plus three named files.
+All images live in `assets/balance2/` (the per-target folder; the target is `balance2` in
+`app.json`). They are numbered PNGs (`NNNN.png`), in **indexed-P** mode with 1-byte
+transparency (palette index 0 = transparent). The watch face references every asset listed
+below; the present ranges are **`0000`–`0105`** (minus the pruned sprites noted at the bottom)
+and **`0200`–`0223`**, plus the named files.
 
-The watch face references the assets below (everything actually used by `watchface/index.js`).
+At build time `zeus build` converts these PNGs to the native ZeppOS **TGA** format in the
+device package — so the source stays as plain PNG and you don't hand-encode TGA. (`Preview.png`
+is the one exception in spirit: keep it a plain PNG here; Zeus resizes/encodes the cover.)
+
 See the widget table in [ARCHITECTURE.md](ARCHITECTURE.md) for where each is placed.
 
 ## Referenced assets
@@ -43,14 +48,14 @@ box's pixel size.
 
 | File | What |
 |------|------|
-| `Preview.png` | App cover — a full render of the face, **ZeppOS TGA** format despite the `.png` name (see finding #6 in [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md)). Referenced by `app.json` `icon`/`cover`. |
+| `Preview.png` | App cover — a full render of the face, a **plain PNG**. `zeus build` resizes it and encodes the device cover. Referenced by `app.json` `icon`/`cover`. (When packaged by hand instead of Zeus, the cover must be hand-encoded as a ZeppOS TGA — see finding #6 in [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md).) |
 | `transparent.png` | Small fully-transparent placeholder. |
 | `fonts/2Expansiva-bold.ttf` | TrueType font carried from the reference watch face (used by the ZeppOS runtime). |
 
-## Unused source sprites
+## Pruned source sprites
 
-The `0000`–`0105` range also contains leftover sprites inherited from the source GTR face that
-this layout doesn't reference (e.g. `0022`, `0033`, `0036`–`0051`, `0053`, `0056`,
-`0065`–`0068`). They're harmless padding — among them, `0046`–`0051` are the source's original
-native-size gauge sprites that were resized into the per-gauge `02xx` copies. Safe to leave in
-place; safe to prune if you want a leaner package.
+The original GTR conversion carried 24 unreferenced leftover sprites (`0022`, `0033`,
+`0036`–`0051`, `0053`, `0056`, `0065`–`0068`). They were **removed** — `zeus build`'s PNG→TGA
+converter rejects degenerate/too-small images (it failed on `0033.png`), and they were unused
+anyway. Among them, `0046`–`0051` were the source's original native-size gauge sprites that had
+already been resized into the per-gauge `02xx` copies.

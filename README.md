@@ -22,47 +22,52 @@ background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬ�
 
 ## Project layout
 
+This is a standard **Zeus** (ZeppOS CLI) source project. Assets live under a per-target
+subfolder (`assets/<target>/`); `app.json` declares the build targets and Zeus compiles the
+project into the device package.
+
 ```
 .
-├── app.json            # ZeppOS app manifest (watchface module, Balance 2 targets)
-├── app.js              # app entry boilerplate
+├── app.json                     # Zeus manifest: targets.balance2 (Balance 2 platforms, designWidth 480)
+├── app.js                       # app entry boilerplate
 ├── watchface/
-│   └── index.js        # all watch-face logic (widgets, sensors, timers)
+│   └── index.js                 # all watch-face logic (widgets, sensors, timers)
 ├── assets/
-│   ├── 0000.png …      # background, glyph fonts, Vault Boy frames, gauge sprites
-│   ├── Preview.png     # app cover (ZeppOS TGA format, .png extension)
-│   ├── transparent.png
-│   └── fonts/2Expansiva-bold.ttf
-├── preview.png         # rendered preview for this README
-├── .gitignore
+│   └── balance2/                # per-target asset folder (matches the target name in app.json)
+│       ├── 0000.png …           # background, glyph fonts, Vault Boy frames, gauge sprites (PNG)
+│       ├── Preview.png          # app cover (plain PNG — Zeus generates the device TGA at build)
+│       ├── transparent.png
+│       └── fonts/2Expansiva-bold.ttf
+├── preview.png                  # rendered preview for this README
+├── docs/                        # architecture, ZeppOS findings, asset map
+├── .gitignore                   # ignores build output (dist/, .zeus/, *.zab/.zpk, node_modules/)
 └── README.md
 ```
 
-`appId` is `1742985`, `appName` is `PipBoy3000`, target API `1.0.0`–`1.0.1`.
+`appId` is `1742985`, `appName` is `PipBoy3000`, target API `3.0.0` (Balance 2 supports up to
+API 4.2). Target device codes: `Lyon` / `LyonWN` / `LyonW` (deviceSource 9568512/13/15).
 
 ## Build / package
 
-This is a standard ZeppOS watch-face project. With the [Zeus CLI](https://docs.zepp.com/docs/guides/tools/cli/):
+Build with the [Zeus CLI](https://docs.zepp.com/docs/guides/tools/cli/) (v1.9.x):
 
 ```bash
-zeus preview      # live preview in the simulator
-zeus build        # produce the installable package
+zeus build        # → dist/<appId>-PipBoy3000-<version>-<timestamp>.zab
+zeus preview      # live preview (needs the simulator / a paired device)
 ```
 
-If you don't use Zeus, the package is just a zip of the project root — that is exactly how
-the existing `.zip` was produced:
+`zeus build` runs the full native toolchain: it bundles the JS (ROLLUP), **compiles it to
+QuickJS bytecode** (`index.bin`), and **converts every PNG asset to the native ZeppOS TGA
+format** — then packs everything into a `.zab` (which wraps the device `.zpk`). No login is
+needed for a local build. The `dist/` output is gitignored.
 
-```bash
-zip -r PipBoy3000.zip app.json app.js watchface assets
-```
-
-(`.zab` and `.zpk` are byte-identical copies of that zip, renamed.)
+> The hand-written `watchface/index.js` is in ZeppOS's already-wrapped runtime form (it calls
+> `DeviceRuntimeCore.WatchFace(...)`); Zeus accepts and re-compiles it without changes.
 
 ## Install
 
-Sideload the produced archive onto the Balance 2 — via the Zepp app (Profile → your watch →
-Watch faces → add a custom face) or the developer bridge, the same way any custom face is
-installed.
+Sideload the built `.zab` (or the inner `.zpk`) onto the Balance 2 — via the Zepp app
+(Profile → your watch → Watch faces → add a custom face) or the developer bridge.
 
 ## Documentation
 

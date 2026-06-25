@@ -7,10 +7,15 @@ How the Pip-Boy 3000 watch face is put together and how it runs on the Amazfit B
 
 | File | Role |
 |------|------|
-| `app.json` | ZeppOS app manifest — `appType: "watchface"`, unique `appId`, target API `1.0.0`–`1.0.1`, the three Balance 2 `deviceSource` platforms, `designWidth: 480`, and `module.watchface.path = "watchface/index"`. `icon`/`cover` point at `Preview.png`. |
+| `app.json` | Zeus manifest. `appType: "watchface"`, unique `appId`, target API `3.0.0`, and a `targets.balance2` block with the three Balance 2 platforms (`Lyon`/`LyonWN`/`LyonW`, deviceSource 9568512/13/15), `designWidth: 480`, and `module.watchface.path = "watchface/index"`. `icon`/`cover` point at `Preview.png`. At build time Zeus flattens `targets.balance2` into the top-level `module`/`platforms` form in the device package. |
 | `app.js` | Standard ZeppOS app entry boilerplate (lifecycle stubs). Not watch-face-specific. |
 | `watchface/index.js` | All of the watch face: widget creation, sensor wiring, timers, and the per-field update functions. This is the only file with real logic. |
-| `assets/` | All images (numbered PNGs + the TGA `Preview.png`) and the font. See [ASSETS.md](ASSETS.md). |
+| `assets/balance2/` | All images (numbered PNGs + the cover `Preview.png`) and the font, under the per-target subfolder. See [ASSETS.md](ASSETS.md). |
+
+**Build:** `zeus build` bundles + compiles `watchface/index.js` to QuickJS bytecode
+(`index.bin`), converts the PNGs to native ZeppOS TGA, and packs a `.zab`/`.zpk` into `dist/`.
+The hand-written `index.js` is already in ZeppOS's wrapped runtime form (it calls
+`DeviceRuntimeCore.WatchFace(...)`); Zeus accepts and re-compiles it unchanged.
 
 ## Runtime lifecycle
 

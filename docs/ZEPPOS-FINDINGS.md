@@ -5,6 +5,12 @@ Balance 2. Each is a thing that cost real debugging time and is **reusable on an
 watch face**. Many of these only surfaced on the physical watch — the simulator / a static
 renderer did not reproduce them.
 
+> **Note on history:** the face was first built from *editor-exported* (pre-wrapped) JS at API
+> 1.x and later **re-authored as modern `@zos` source** at API 4.0 (see finding #11). Findings
+> #3 (init_view crash), #4 (`getTimeFormat` enum) and #5 (`IMG_DATE`) describe the legacy
+> editor-form code and the API-1.x runtime; they remain instructive but no longer match the
+> current source. The rest are runtime/rendering rules that still apply.
+
 ---
 
 ## 1. `TEXT_IMG.align_h` does nothing without an explicit box `w` — and clips to `w`

@@ -1,5 +1,5 @@
 {
-  "configVersion": "v2",
+  "configVersion": "v3",
   "app": {
     "appId": 1742985,
     "appName": "PipBoy3000",
@@ -12,7 +12,7 @@
   },
   "permissions": [],
   "runtime": {
-    "apiVersion": { "compatible": "3.0.0", "target": "3.0.0", "minVersion": "3.0.0" }
+    "apiVersion": { "compatible": "4.0.0", "target": "4.0.0", "minVersion": "4.0.0" }
   },
   "targets": {
     "balance2": {

@@ -7,72 +7,46 @@ How the Pip-Boy 3000 watch face is put together and how it runs on the Amazfit B
 
 | File | Role |
 |------|------|
-| `app.json` | Zeus manifest. `appType: "watchface"`, unique `appId`, target API `3.0.0`, and a `targets.balance2` block with the three Balance 2 platforms (`Lyon`/`LyonWN`/`LyonW`, deviceSource 9568512/13/15), `designWidth: 480`, and `module.watchface.path = "watchface/index"`. `icon`/`cover` point at `Preview.png`. At build time Zeus flattens `targets.balance2` into the top-level `module`/`platforms` form in the device package. |
-| `app.js` | Standard ZeppOS app entry boilerplate (lifecycle stubs). Not watch-face-specific. |
-| `watchface/index.js` | All of the watch face: widget creation, sensor wiring, timers, and the per-field update functions. This is the only file with real logic. |
+| `app.json` | Zeus manifest. `configVersion: v3`, `appType: "watchface"`, unique `appId`, target API **`4.0.0`**, and a `targets.balance2` block with the three Balance 2 platforms (`Lyon`/`LyonWN`/`LyonW`, deviceSource 9568512/13/15), `designWidth: 480`, and `module.watchface.path = "watchface/index"`. `icon`/`cover` point at `Preview.png`. At build time Zeus flattens `targets.balance2` into the top-level `module`/`platforms` form in the device package. |
+| `app.js` | Modern `App({...})` entry (lifecycle stubs). Not watch-face-specific. |
+| `watchface/index.js` | The whole watch face, as **modern ZeppOS `@zos` source**: a `WatchFace({ build(), onDestroy() })` that creates the widgets. The only file with real logic. |
+| `preview.js` | Local static renderer (Node, zero deps) — composites the face to a PNG (no watch needed). See [Preview](#preview). |
 | `assets/balance2/` | All images (numbered PNGs + the cover `Preview.png`) and the font, under the per-target subfolder. See [ASSETS.md](ASSETS.md). |
 
-**Build:** `zeus build` bundles + compiles `watchface/index.js` to QuickJS bytecode
+**Build:** `zeus build` bundles the `@zos` source (ROLLUP), compiles it to QuickJS bytecode
 (`index.bin`), converts the PNGs to native ZeppOS TGA, and packs a `.zab`/`.zpk` into `dist/`.
-The hand-written `index.js` is already in ZeppOS's wrapped runtime form (it calls
-`DeviceRuntimeCore.WatchFace(...)`); Zeus accepts and re-compiles it unchanged.
+Zeus wraps the source in its own runtime bootstrap. (An earlier build fed Zeus the
+*editor-exported, pre-wrapped* form and declared API 3.0 → black screen on device; the fix was
+re-authoring as `@zos` source — see finding #11 in [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md).)
 
 ## Runtime lifecycle
 
-`watchface/index.js` registers a `DeviceRuntimeCore.WatchFace({...})` with three relevant
-hooks:
-
-```
-build()  →  this.init_view()      // create every widget, once
-onInit() / onDestroy()            // log only
-```
-
-`init_view()` does two things, in order:
-
-1. **Creates all widgets** — background, date digits, day-of-week, weather icon + temperature,
-   Vault Boy, time, seconds, AM/PM, the four metric numbers, the four gauges, battery, and the
-   status icons.
-2. **Wires runtime behavior** — a TIME-sensor `DAYCHANGE` listener, then defines the update
-   functions, then creates a **`WIDGET_DELEGATE`** that owns the timers.
-
-> ⚠️ **Everything after a throwing statement in `init_view()` never runs.** If a widget or
-> sensor call throws, the `WIDGET_DELEGATE` is never created, so no timers start and the face
-> appears half-dead (frozen Vault Boy, blank date). This actually happened — see
-> [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md). Keep risky calls out of `init_view()`.
-
-### The `WIDGET_DELEGATE` (resume/pause)
+`watchface/index.js` is a modern `@zos` module:
 
 ```js
-hmUI.createWidget(hmUI.widget.WIDGET_DELEGATE, {
-  resume_call() {
-    // 1) START TIMERS FIRST
-    if (screenType == WATCHFACE) normal_timerTextUpdate = timer.createTimer(0, 1000, text_update);
-    normal_vaultboy_timer = timer.createTimer(0, 200, animate_vaultboy);
-    // 2) then one-shot refreshes
-    time_update(true, true); date_update(); text_update(); ampm_update();
-  },
-  pause_call() { /* stopTimer both timers, set to undefined */ },
-});
+import * as hmUI from '@zos/ui'
+import { Time } from '@zos/sensor'
+import { createTimer, stopTimer } from '@zos/timer'
+
+WatchFace({
+  build() { /* create every widget; start the date + Vault Boy timers */ },
+  updateDate() { /* refresh the per-digit date from the Time sensor */ },
+  onDestroy() { /* stop both timers */ },
+})
 ```
 
-**Timers are created before the one-shot updates on purpose.** If a one-shot update ever
-throws, the timers (seconds + Vault Boy animation) are already running, so the face keeps
-ticking. This ordering is a fix for a real regression where a throwing `ampm_update()` killed
-the animation.
+`build()` creates every widget once. Most widgets **auto-update from system data** via their
+`type: hmUI.data_type.*` binding — no JS needed for time, metrics, gauges, weather, battery, or
+day-of-week. Only two things need imperative code (a `createTimer` each), and both are stopped
+in `onDestroy()`:
 
-## Update functions
+| Driver | What it does |
+|--------|--------------|
+| `updateDate()` (60 s timer + once at build) | Reads `Time.getDate()/getMonth()/getFullYear()`, zero-pads to `DDMMYYYY`, and sets each of the 8 per-digit date `IMG`s' `SRC` to the matching glyph (`0011`–`0020`). Per-digit (not `IMG_DATE`) keeps the digits pixel-aligned to the baked separator dots. |
+| Vault Boy timer (200 ms) | Cycles the Vault Boy `IMG`'s `SRC` through the 8 frames `0057`–`0064`. |
 
-| Function | Driven by | What it does |
-|----------|-----------|--------------|
-| `time_update()` | — | No-op. The hour/minute digits are an `IMG_TIME` widget, which the firmware updates autonomously; nothing to do in JS. |
-| `date_update()` | TIME sensor + `DAYCHANGE` | Reads `timeSensor.day/month/year`, zero-pads, and sets each per-digit date `IMG`'s `SRC` to the matching glyph (`0011`–`0020`). The native `IMG_DATE` widget does **not** render on Balance 2, so the date is drawn digit-by-digit. |
-| `text_update()` | 1 s timer | Renders the two seconds digits via the `TextRotate` `IMG`s (positions them at `pos_x` and toggles `VISIBLE`). Skipped in AOD. |
-| `ampm_update()` | resume + `DAYCHANGE` | Shows AM (`0024`) / PM (`0025`) **only in 12-hour mode** (`hmSetting.getTimeFormat() == 0`); hidden in 24-hour. Wrapped in try/catch. |
-| `animate_vaultboy()` | 200 ms timer | Advances `normal_vaultboy_index` through the 8 frames `0057`–`0064` and updates the Vault Boy `IMG`'s `SRC`. |
-
-The TIME-sensor `DAYCHANGE` listener (registered in `init_view()`) re-runs
-`time_update`/`date_update`/`ampm_update` at midnight. This listener is safe — the TIME sensor
-supports `DAYCHANGE` (unlike the DISTANCE sensor's `CHANGE`, which is not supported and threw).
+Everything else (`IMG_TIME` hour/minute/second, the metric `TEXT_IMG`s, the gauge `IMG_LEVEL`s,
+weather, battery, `IMG_STATUS` icons) is declarative and bound by `data_type`/`system_status`.
 
 ## Widget inventory
 
@@ -87,9 +61,7 @@ Coordinates are in the 480-px design space, straight from `watchface/index.js`.
 | Temperature value | `TEXT_IMG` | `WEATHER_CURRENT` | `0011`–`0020`, neg `0021` | 338,78 (56×24), align RIGHT |
 | Degree ° | `IMG` | — | `0023` | 394,78 |
 | Vault Boy | `IMG` (animated) | 200 ms timer | `0057`–`0064` | 183,130 |
-| Time HH / MM | `IMG_TIME` | autonomous | `0001`–`0010` | 328,132 / 328,246 |
-| Seconds | 2× `IMG` (TextRotate) | 1 s timer | `0011`–`0020` | 371,348 |
-| AM/PM | `IMG` | 12h only | `0024`/`0025` | 366,371 |
+| Time HH / MM / SS | `IMG_TIME` | autonomous | HH·MM `0001`–`0010`; SS `0011`–`0020` | 328,132 / 328,246 / 371,348 |
 | Calories | `TEXT_IMG` | `CAL` | `0069`–`0078` | 17,149 (72×24), align RIGHT |
 | Pulse | `TEXT_IMG` | `HEART` | `0069`–`0078` | 15,216 (58×24), align RIGHT |
 | Distance | `TEXT_IMG` | `DISTANCE` | `0069`–`0078`, dot `0034` | 8,277 (80×24), align RIGHT |
@@ -106,10 +78,21 @@ Coordinates are in the 480-px design space, straight from `watchface/index.js`.
 on-watch (`DISTANCE` can't be `type`-bound, and two `IMG_LEVEL`s can't share `STEP`). See
 [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md).
 
+## Preview
+
+`node preview.js [out.png]` (default `preview.png`) composites the face to a 480×480 PNG locally
+(round-clipped, with mock data) so the layout can be checked **before flashing a watch**. It's a
+zero-dependency Node script (built-in `zlib` only — no npm install): it parses the
+`hmUI.createWidget(...)` calls in `watchface/index.js` (resolving the named sprite-group
+constants) and decodes/encodes the PNGs itself. An approximation of firmware rendering — good
+for position/presence, not a substitute for the device on data-driven fields. For a live
+preview, `zeus preview` against the Zepp OS Simulator / a paired device.
+
 ## Origin
 
-This project was generated by a GTR→Balance 2 converter (`convert_v2.py`, in the separate
-`amazfit_gtr_tools` repo) from the source GTR Pip-Boy 3000 face, then hand-tuned over many
-on-device iterations. The converter is **not** required to build or modify this watch face —
-the project here is self-contained ZeppOS source. The durable lessons from that tuning live in
+The layout/assets were originally produced by a GTR→Balance 2 converter (`convert_v2.py`, in the
+separate `amazfit-gtr-zeppos-converter` repo) from the source GTR Pip-Boy 3000 face, then
+hand-tuned over many on-device iterations, and finally **re-authored as modern `@zos` source**
+so it builds with `zeus`. The converter is **not** required to build or modify this watch face —
+the project here is self-contained ZeppOS source. The durable lessons live in
 [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md).

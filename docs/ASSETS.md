@@ -2,9 +2,10 @@
 
 All images live in `assets/balance2/` (the per-target folder; the target is `balance2` in
 `app.json`). They are numbered PNGs (`NNNN.png`), in **indexed-P** mode with 1-byte
-transparency (palette index 0 = transparent). The watch face references every asset listed
-below; the present ranges are **`0000`–`0105`** (minus the pruned sprites noted at the bottom)
-and **`0200`–`0223`**, plus the named files.
+transparency (palette index 0 = transparent). The watch face references the assets listed
+below (all but the `0024`/`0025` AM-PM pair, kept for possible re-use); the present ranges are
+**`0000`–`0105`** (minus the pruned sprites noted at the bottom) and **`0200`–`0223`**, plus the
+named files.
 
 At build time `zeus build` converts these PNGs to the native ZeppOS **TGA** format in the
 device package — so the source stays as plain PNG and you don't hand-encode TGA. (`Preview.png`
@@ -21,7 +22,7 @@ See the widget table in [ARCHITECTURE.md](ARCHITECTURE.md) for where each is pla
 | `0011`–`0020` | 10 | Small/medium digits 0–9 | date, temperature, seconds |
 | `0021` | 1 | Minus sign `−` | temperature `negative_image` |
 | `0023` | 1 | Degree symbol `°` | after the temperature value |
-| `0024` / `0025` | 2 | AM / PM glyphs | AM/PM `IMG` (12-hour mode only) |
+| `0024` / `0025` | 2 | AM / PM glyphs | **currently unused** (AM/PM was omitted in the `@zos` rewrite; kept in case it's re-added) |
 | `0026`–`0032` | 7 | Day-of-week labels (MO…SU) | day-of-week `IMG_LEVEL` (`WEEK`) |
 | `0034` | 1 | Decimal point (7×22) | distance `dot_image` |
 | `0035` | 1 | Percent `%` | battery `%` `IMG` |

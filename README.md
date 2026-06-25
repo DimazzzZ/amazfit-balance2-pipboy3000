@@ -9,7 +9,7 @@ background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬ�
 
 ## Features
 
-- **Time** — large hour-over-minute digits, plus a sensor-driven seconds readout.
+- **Time** — large hour-over-minute digits plus small seconds, all one autonomous `IMG_TIME`.
 - **Date** — `DD.MM.YYYY`, drawn per-digit from the time sensor and snugged to the
   background's separator dots.
 - **Day of week** — top banner (ВТОРНИК, etc.).
@@ -28,24 +28,26 @@ project into the device package.
 
 ```
 .
-├── app.json                     # Zeus manifest: targets.balance2 (Balance 2 platforms, designWidth 480)
-├── app.js                       # app entry boilerplate
+├── app.json                     # Zeus manifest (configVersion v3): targets.balance2, designWidth 480
+├── app.js                       # modern App({}) entry boilerplate
 ├── watchface/
-│   └── index.js                 # all watch-face logic (widgets, sensors, timers)
+│   └── index.js                 # the watch face, as @zos source: WatchFace({ build, onDestroy })
 ├── assets/
 │   └── balance2/                # per-target asset folder (matches the target name in app.json)
 │       ├── 0000.png …           # background, glyph fonts, Vault Boy frames, gauge sprites (PNG)
 │       ├── Preview.png          # app cover (plain PNG — Zeus generates the device TGA at build)
 │       ├── transparent.png
 │       └── fonts/2Expansiva-bold.ttf
+├── preview.js                   # zero-dep Node previewer (runs the face under mocked @zos)
 ├── preview.png                  # rendered preview for this README
 ├── docs/                        # architecture, ZeppOS findings, asset map
 ├── .gitignore                   # ignores build output (dist/, .zeus/, *.zab/.zpk, node_modules/)
 └── README.md
 ```
 
-`appId` is `1742985`, `appName` is `PipBoy3000`, target API `3.0.0` (Balance 2 supports up to
-API 4.2). Target device codes: `Lyon` / `LyonWN` / `LyonW` (deviceSource 9568512/13/15).
+`appId` is `1742985`, `appName` is `PipBoy3000`, `configVersion: v3`, target API **`4.0.0`**
+(Balance 2 supports up to API 4.2). Target device codes: `Lyon` / `LyonWN` / `LyonW`
+(deviceSource 9568512/13/15).
 
 ## Build / package
 
@@ -56,28 +58,41 @@ zeus build        # → dist/<appId>-PipBoy3000-<version>-<timestamp>.zab
 zeus preview      # live preview (needs the simulator / a paired device)
 ```
 
-`zeus build` runs the full native toolchain: it bundles the JS (ROLLUP), **compiles it to
-QuickJS bytecode** (`index.bin`), and **converts every PNG asset to the native ZeppOS TGA
+`zeus build` runs the full native toolchain: it bundles the `@zos` source (ROLLUP), **compiles
+it to QuickJS bytecode** (`index.bin`), and **converts every PNG asset to the native ZeppOS TGA
 format** — then packs everything into a `.zab` (which wraps the device `.zpk`). No login is
 needed for a local build. The `dist/` output is gitignored.
 
-> The hand-written `watchface/index.js` is in ZeppOS's already-wrapped runtime form (it calls
-> `DeviceRuntimeCore.WatchFace(...)`); Zeus accepts and re-compiles it without changes.
+> `watchface/index.js` is modern `@zos` source (`import * as hmUI from '@zos/ui'`, `WatchFace({…})`);
+> Zeus adds its own runtime wrapper at build. An earlier attempt that fed Zeus the
+> *editor-exported, pre-wrapped* JS at API 3.0 installed but showed a **black screen** — see
+> finding #11 in [docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md).
+
+## Preview (before flashing)
+
+```bash
+node preview.js [out.png]        # default: preview.png
+```
+
+A **zero-dependency** Node script (built-in `zlib` only). It runs `watchface/index.js` under
+mocked `@zos` modules, captures the actual `createWidget(...)` calls, and composites the PNG
+assets to a 480×480 image with mock data — so the layout can be checked with no watch. It's an
+approximation (no live sensors/animation); for a true device/simulator preview use `zeus preview`.
 
 ## Install
 
 Sideload the built `.zab` (or the inner `.zpk`) onto the Balance 2 — via the Zepp app
-(Profile → your watch → Watch faces → add a custom face) or the developer bridge.
+(Profile → your watch → Watch faces → add a custom face / Zepp Dev scan) or the developer bridge.
 
 ## Documentation
 
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — file roles, the `init_view` →
-  `WIDGET_DELEGATE` runtime lifecycle, the update functions, and a full widget inventory
-  (type, binding, asset, coordinates).
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — file roles, the `WatchFace({ build,
+  onDestroy })` lifecycle, `data_type` auto-binding vs the two timers (date + Vault Boy), and a
+  full widget inventory (type, binding, asset, coordinates).
 - **[docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md)** — reusable Balance 2 / ZeppOS lessons
   (symptom → cause → fix): `TEXT_IMG` alignment needs `w`, `IMG_LEVEL` `type`-binding limits,
-  why a bad call in `init_view` bricks the whole face, the `getTimeFormat` `0`/`1` gotcha, the
-  non-rendering `IMG_DATE`, the TGA cover requirement, and more.
+  the TGA cover requirement, the unique-`appId` rule, building with `zeus`, and why an
+  editor-exported face rebuilt by Zeus black-screens (and the `@zos`-source fix).
 - **[docs/ASSETS.md](docs/ASSETS.md)** — the numbered-PNG asset index map.
 
 ## Known on-watch behaviors
@@ -85,14 +100,13 @@ Sideload the built `.zab` (or the inner `.zpk`) onto the Balance 2 — via the Z
 - **Distance gauge stays empty.** ZeppOS `DISTANCE` has no `_TARGET` and a `[0,99] km` range,
   so it can't be `type`-bound like a goal metric. It's bound to `type:STEP` so it renders
   without error, but two `IMG_LEVEL` widgets can't share one data type — only the Steps gauge
-  actually fills. (A crash-safe dynamic version would compute the level from the distance
-  sensor inside the resume/timer callback, wrapped in try/catch — never via a sensor listener
-  in `init_view()`, which aborts the whole face.)
+  actually fills. (A dynamic version would compute the level from the distance sensor inside a
+  `createTimer` callback and `setProperty(prop.MORE, { level })`.)
 - **Temperature & distance units** (°C/°F, km/mi, decimal point) follow the watch's
   locale/unit settings.
-- **AM/PM** shows only when the watch is in 12-hour mode; it's hidden in 24-hour mode.
-- The **date** is sensor-driven per digit (the native `IMG_DATE` widget did not render on the
-  Balance 2).
+- The **date** is drawn per-digit and refreshed from the `Time` sensor (kept per-digit so the
+  digits stay pixel-aligned to the baked separator dots). AM/PM is not shown; `IMG_TIME` follows
+  the watch's 12/24-hour setting.
 
 ## Credits
 

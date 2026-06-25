@@ -172,15 +172,42 @@ Packing this face with `zeus build` (v1.9.x) surfaced several project-layout req
   list is fetched from Zepp and cached at `~/.zepp/.zeus_devices`.
 - **The PNG→TGA converter rejects degenerate images** ("image size is too small"). Drop unused
   / 0-dimension sprites before building (this is why the 24 leftover sprites were pruned).
-- **Pre-compiled `index.js` is accepted.** Our `DeviceRuntimeCore.WatchFace(...)`-wrapped file
-  passes ROLLUP + QJSC unchanged; Zeus compiles it to QuickJS bytecode (`index.bin`).
+- **Pre-compiled `index.js` *builds* but does not run.** An editor-exported, already-wrapped
+  file passes ROLLUP + QJSC and packs fine — but black-screens on device. See finding #11.
 - **No login needed** for a local `zeus build`; login is only for publish / device preview.
+
+---
+
+## 11. Editor-exported JS rebuilt by Zeus = black screen; ship modern `@zos` source
+
+**Symptom:** `zeus build` succeeded and the package installed (via Zepp Dev scan), but the watch
+showed a **black screen** — no face at all.
+
+**Cause:** the watch face was originally *editor-exported* JS — code already wrapped in the
+ZeppOS runtime bootstrap (`__$$hmAppManager$$__`, `DeviceRuntimeCore.WidgetFactory`, the
+"Watch_Face_Editor v18.0" header) that targets the **legacy 1.x runtime**. Feeding that to
+`zeus build` and declaring **API 3.0** recompiled it to bytecode under a runtime that doesn't
+provide those globals → the bootstrap throws at load → the outer `try/catch` swallows it → black.
+Proof: the reference **mrc206en** (a working Balance 2 face of the same editor lineage) ships
+`watchface/index.js` as **raw JS at API 1.0.1**, flat `module`, no `runtime.type` — i.e. it is
+*not* rebuilt by Zeus; it's shipped as-is.
+
+**Fix:** there are two valid packaging paths — don't mix them:
+- **Legacy/raw:** ship the editor-exported JS as a plain package at **API 1.0.1** (zip the
+  project; the JS runs as-is). This is what a hand-converter / the reference does.
+- **Modern (this repo):** **re-author as `@zos` source** — `import * as hmUI from '@zos/ui'`,
+  `import { Time } from '@zos/sensor'`, `import { createTimer } from '@zos/timer'`,
+  `WatchFace({ build(){…}, onDestroy(){} })` — at `configVersion v3` / **API 4.0**, and let
+  `zeus build` add its own runtime wrapper. Most widgets auto-update via `data_type` binding;
+  only the date refresh and Vault Boy animation use `createTimer`. This builds *and* renders.
+
+Rule of thumb: **`zeus build` is for `@zos` source, not for already-compiled editor output.**
 
 ---
 
 ## Meta-lesson
 
 The Balance 2 firmware diverges from both the simulator and a naïve static renderer in several
-places (alignment, the TGA cover, sensor binding, animation, `IMG_DATE`). **The physical watch
-is the ground truth** — every one of the findings above was invisible until the face ran on the
-device and was photographed.
+places (alignment, the TGA cover, sensor binding, animation, `IMG_DATE`, and the editor-vs-`@zos`
+packaging split). **The physical watch is the ground truth** — every one of the findings above
+was invisible until the face ran on the device and was photographed.

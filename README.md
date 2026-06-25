@@ -80,5 +80,6 @@ installed.
 
 ## Credits
 
-Converted from the GTR Pip-Boy 3000 watch face and adapted to the Amazfit Balance 2 / ZeppOS
-platform.
+Based on the GTR Pip-Boy 3000 watch face
+([amazfitwatchfaces.com/gtr/view/3513](https://amazfitwatchfaces.com/gtr/view/3513)),
+converted and adapted to the Amazfit Balance 2 / ZeppOS platform.

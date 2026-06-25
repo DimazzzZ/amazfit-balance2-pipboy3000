@@ -1,0 +1,13 @@
+# Build output / packaged watch face (regenerate with `zeus build` or by zipping the project root)
+*.zip
+*.zab
+*.zpk
+dist/
+build/
+
+# ZeppOS / Zeus toolchain
+.zeus/
+node_modules/
+
+# OS cruft
+.DS_Store

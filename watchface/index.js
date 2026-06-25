@@ -1,6 +1,10 @@
 import * as hmUI from '@zos/ui'
 import { Time } from '@zos/sensor'
 import { createTimer, stopTimer } from '@zos/timer'
+import {
+  launchApp, SYSTEM_APP_STATUS, SYSTEM_APP_HR, SYSTEM_APP_WEATHER,
+  SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM, SYSTEM_APP_SETTING,
+} from '@zos/router'
 
 // Fonts / sprite groups (assets are in assets/balance2/, referenced by bare name).
 const DATE_FONT = [
@@ -110,6 +114,26 @@ WatchFace({
     hmUI.createWidget(hmUI.widget.IMG_STATUS, { x: 312, y: 368, src: '0054.png', type: hmUI.system_status.DISCONNECT })
     hmUI.createWidget(hmUI.widget.IMG_STATUS, { x: 351, y: 368, src: '0052.png', type: hmUI.system_status.LOCK })
     hmUI.createWidget(hmUI.widget.IMG_STATUS, { x: 405, y: 366, src: '0055.png', type: hmUI.system_status.CLOCK })
+
+    // ---- Tap-to-launch shortcuts ----
+    // Invisible BUTTON overlays (hit area = w*h regardless of the transparent src). Created
+    // last so they sit on top and receive touches. Each opens its relevant system app.
+    const tapZone = (x, y, w, h, appId) =>
+      hmUI.createWidget(hmUI.widget.BUTTON, {
+        x, y, w, h, text: '',
+        normal_src: 'transparent.png', press_src: 'transparent.png',
+        click_func: () => {
+          try { launchApp({ appId, native: true }) } catch (e) { console.log('launchApp failed', e) }
+        },
+      })
+    tapZone(300, 70, 135, 44, SYSTEM_APP_WEATHER)    // weather icon + temperature
+    tapZone(78, 72, 120, 32, SYSTEM_APP_CALENDAR)    // date DD.MM.YYYY
+    tapZone(300, 120, 160, 220, SYSTEM_APP_ALARM)    // time HH/MM
+    tapZone(10, 146, 155, 32, SYSTEM_APP_STATUS)     // calories -> Activity
+    tapZone(10, 210, 140, 34, SYSTEM_APP_HR)         // pulse -> Heart Rate
+    tapZone(5, 272, 160, 34, SYSTEM_APP_STATUS)      // distance -> Activity
+    tapZone(185, 345, 110, 52, SYSTEM_APP_STATUS)    // steps -> Activity
+    tapZone(40, 372, 120, 34, SYSTEM_APP_SETTING)    // battery -> Settings
 
     // ---- Dynamic bits: date refresh + Vault Boy walk cycle ----
     this.updateDate()

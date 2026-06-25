@@ -78,6 +78,26 @@ Coordinates are in the 480-px design space, straight from `watchface/index.js`.
 on-watch (`DISTANCE` can't be `type`-bound, and two `IMG_LEVEL`s can't share `STEP`). See
 [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md).
 
+## Tap-to-launch shortcuts
+
+Created **last in `build()`** (so they sit on top and capture touches) as invisible `BUTTON`
+widgets — hit area is `w×h`, drawn with `transparent.png`. Each `click_func` calls
+`@zos/router` `launchApp({ appId: SYSTEM_APP_*, native: true })` (wrapped in try/catch).
+
+| Tap zone | x, y (w×h) | Opens |
+|----------|-----------|-------|
+| Weather / temperature | 300,70 (135×44) | `SYSTEM_APP_WEATHER` |
+| Date | 78,72 (120×32) | `SYSTEM_APP_CALENDAR` |
+| Time (HH/MM) | 300,120 (160×220) | `SYSTEM_APP_ALARM` |
+| Calories | 10,146 (155×32) | `SYSTEM_APP_STATUS` (Activity) |
+| Pulse | 10,210 (140×34) | `SYSTEM_APP_HR` |
+| Distance | 5,272 (160×34) | `SYSTEM_APP_STATUS` |
+| Steps | 185,345 (110×52) | `SYSTEM_APP_STATUS` |
+| Battery | 40,372 (120×34) | `SYSTEM_APP_SETTING` |
+
+(`IMG_CLICK` + `type: data_type.*` is the alternative auto-jump widget; this face uses explicit
+`BUTTON` + `launchApp` so each target is chosen by name.)
+
 ## Preview
 
 `node preview.js [out.png]` (default `preview.png`) composites the face to a 480×480 PNG locally

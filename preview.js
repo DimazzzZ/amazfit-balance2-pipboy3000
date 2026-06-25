@@ -207,10 +207,25 @@ function nameProxy() {
   return new Proxy({}, { get: (_, k) => (typeof k === 'string' ? k : undefined) })
 }
 
+// Rewrite ES imports into `const … = __require('mod')` so any @zos module resolves to a mock.
+function transformImports(src) {
+  return src
+    .replace(/^\s*import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"];?\s*$/gm,
+      (_, ns, mod) => `const ${ns} = __require(${JSON.stringify(mod)});`)
+    .replace(/^\s*import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"];?\s*$/gm,
+      (_, names, mod) => {
+        const binds = names.split(',').map((n) => n.trim()).filter(Boolean)
+          .map((n) => n.replace(/\s+as\s+/, ': ')).join(', ')
+        return `const { ${binds} } = __require(${JSON.stringify(mod)});`
+      })
+    .replace(/^\s*import\s+(\w+)\s+from\s+['"]([^'"]+)['"];?\s*$/gm,
+      (_, name, mod) => `const ${name} = (__require(${JSON.stringify(mod)}).default || __require(${JSON.stringify(mod)}));`)
+}
+
 // Execute watchface/index.js and return the ordered list of created widgets.
 function collectWidgets(folder) {
   let src = fs.readFileSync(path.join(folder, 'watchface', 'index.js'), 'utf8')
-  src = src.replace(/^\s*import\s.*$/gm, '') // strip ES imports; deps are injected below
+  src = transformImports(src)
 
   const widgets = []
   const hmUI = {
@@ -240,12 +255,20 @@ function collectWidgets(folder) {
     getDay() { return d.weekday } getHours() { return d.hour } getMinutes() { return d.minute }
     getSeconds() { return d.second } getTime() { return 0 } getZone() { return 0 }
   }
-  const createTimer = () => 1
-  const stopTimer = () => {}
+  // Module registry for the rewritten imports. Unknown modules / named exports resolve to
+  // harmless callables (e.g. `@zos/router` SYSTEM_APP_* constants, `launchApp`) — none of the
+  // click handlers run during a preview anyway.
+  const anyMock = new Proxy(function () {}, { get: () => anyMock, apply: () => undefined })
+  const MODS = {
+    '@zos/ui': hmUI,
+    '@zos/sensor': { Time },
+    '@zos/timer': { createTimer: () => 1, stopTimer: () => {} },
+  }
+  const __require = (mod) => MODS[mod] || new Proxy({}, { get: () => anyMock })
   const WatchFace = (obj) => { if (obj && typeof obj.build === 'function') obj.build() }
 
-  const fn = new Function('hmUI', 'Time', 'createTimer', 'stopTimer', 'WatchFace', src)
-  fn(hmUI, Time, createTimer, stopTimer, WatchFace)
+  const fn = new Function('__require', 'WatchFace', src)
+  fn(__require, WatchFace)
   return widgets
 }
 

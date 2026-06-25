@@ -205,6 +205,21 @@ Rule of thumb: **`zeus build` is for `@zos` source, not for already-compiled edi
 
 ---
 
+## 12. Tap-to-launch shortcuts from a watch face
+
+To open a system app when a face element is tapped, overlay a **transparent `BUTTON`** (hit area
+= its `w×h`, irrespective of the `normal_src`/`press_src` image size — `transparent.png` works at
+any size) and in `click_func` call **`@zos/router` `launchApp({ appId: SYSTEM_APP_*, native:
+true })`** (system-app launch needs API ≥ 3.0). Create the buttons **last in `build()`** so they
+sit on top and receive touches. `SYSTEM_APP_*` constants name the targets (`SYSTEM_APP_STATUS` =
+Activity, `SYSTEM_APP_HR`, `SYSTEM_APP_WEATHER`, `SYSTEM_APP_CALENDAR`, `SYSTEM_APP_ALARM`,
+`SYSTEM_APP_SETTING`, …). Wrap the call in try/catch — a `SYSTEM_APP_*` not present on a given
+firmware just no-ops. (The watchface-native alternative is `IMG_CLICK` with `type:
+hmUI.data_type.*`, which auto-jumps to the app for that metric — but the destination is fixed by
+the data type, whereas `BUTTON` + `launchApp` lets you choose any app.)
+
+---
+
 ## Meta-lesson
 
 The Balance 2 firmware diverges from both the simulator and a naïve static renderer in several

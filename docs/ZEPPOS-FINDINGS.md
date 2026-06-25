@@ -1,0 +1,154 @@
+# ZeppOS / Balance 2 findings
+
+Hard-won, non-obvious platform lessons from building this watch face on a real Amazfit
+Balance 2. Each is a thing that cost real debugging time and is **reusable on any ZeppOS
+watch face**. Many of these only surfaced on the physical watch — the simulator / a static
+renderer did not reproduce them.
+
+---
+
+## 1. `TEXT_IMG.align_h` does nothing without an explicit box `w` — and clips to `w`
+
+**Symptom:** Right/center-aligned numbers rendered left-anchored and landed on top of other
+widgets; the battery read `%92`; the temperature was clipped off the round edge.
+
+**Cause:** `align_h` aligns the content **inside the widget's box width `w`**. If you don't set
+`w`, the box auto-fits the content, so `align_h: RIGHT`/`CENTER_H` is a no-op and `x` is just
+the left edge. Worse, the box also **clips** its content: if `w` is narrower than the rendered
+number, the leading digit(s) are cut off.
+
+**Fix:** Always give an aligned `TEXT_IMG` an explicit `w` (and `h`). Make `w` wide enough for
+the *widest realistic value* (e.g. 5-digit steps `10000`, 3-digit calories/pulse), keeping the
+fixed edge where you want it:
+- `align_h: RIGHT` → the right edge stays put, extra width extends left.
+- `align_h: CENTER_H` → the box is centered on the anchor.
+
+In this project every metric `TEXT_IMG` carries a `w` sized for its max value (see the widget
+table in [ARCHITECTURE.md](ARCHITECTURE.md)).
+
+---
+
+## 2. `IMG_LEVEL` `type`-binding: which metrics fill, and the DISTANCE trap
+
+`IMG_LEVEL` draws `image_array[level]`, and setting `type: hmUI.data_type.X` lets the firmware
+pick the level from the metric automatically.
+
+- **Works (fills by goal):** `STEP`, `CAL`, `HEART`. These have a target/goal the firmware uses
+  as the 100% point (`STEP`/`STEP_TARGET`, `CAL`/`CAL_TARGET`; `HEART` maps over its range).
+- **Does NOT work: `DISTANCE`.** It has **no `_TARGET`** and a fixed value range of `[0, 99]`
+  km, so a real ~3 km distance maps to ~3% ≈ level 0 → the gauge looks empty.
+- **Two `IMG_LEVEL`s cannot share the same `type`.** Binding both the Distance and Steps gauges
+  to `STEP` only drives one of them; the other stays at level 0.
+
+**Consequence in this project:** the Distance gauge is bound to `type: STEP` purely so it
+renders cleanly, but it stays empty on-watch (known/accepted). To make it actually fill, drive
+its level manually (see finding #3 for the safe way) — read the distance sensor and call
+`gauge.setProperty(hmUI.prop.MORE, { level })` from inside a timer/`resume_call`, never via a
+sensor listener in `init_view()`.
+
+---
+
+## 3. A bad call in `init_view()` bricks the *entire* face
+
+**Symptom:** Vault Boy frozen, date blank, gauge black — all at once, with no obvious error.
+
+**Cause:** `init_view()` runs top-to-bottom and creates the `WIDGET_DELEGATE` (which owns the
+animation + seconds timers) **near the end**. Any statement that throws before that point aborts
+`init_view()`, so the delegate is never created → `resume_call` never runs → no timers and no
+one-shot updates. One bad line takes down everything downstream. The outer `try/catch` in the
+generated file swallows the error, so it fails silently.
+
+The specific trigger: `distSensor.addEventListener(distSensor.event.CHANGE, …)` — the DISTANCE
+sensor does **not** support that listener and threw.
+
+**Rules:**
+- Only attach sensor listeners you know are supported. The **TIME sensor's `DAYCHANGE`** is
+  fine and is used here; the **DISTANCE sensor's `CHANGE`** is not.
+- Compute anything risky in the timer / `resume_call`, wrapped in `try/catch`, **not** in
+  `init_view()`.
+- Create timers **first** in `resume_call`, before one-shot updates, so a later throw can't stop
+  them (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+
+---
+
+## 4. `hmSetting.getTimeFormat()` returns `0`/`1` — there is no `time_format` enum
+
+**Symptom:** The Vault Boy animation silently stopped (an earlier build).
+
+**Cause:** Code referenced `hmSetting.time_format.HOUR_12`, which doesn't exist → `TypeError`
+inside `ampm_update()` during `resume_call`, which aborted before the animation timer (this is
+the regression that motivated the timers-first ordering in finding #3).
+
+**Fix:** `hmSetting.getTimeFormat()` returns a plain number: **`0` = 12-hour, `1` = 24-hour**.
+Compare against the literal:
+
+```js
+let is12h = hmSetting.getTimeFormat() == 0;
+```
+
+---
+
+## 5. The native `IMG_DATE` widget does not render on Balance 2
+
+**Symptom:** Only the baked-in separator dots showed; no date digits.
+
+**Fix:** Draw the date as individual `IMG` widgets (one per digit) and update each one's `SRC`
+from the TIME sensor in `date_update()` — the same proven mechanism as the seconds. See
+`date_update()` in `watchface/index.js`.
+
+---
+
+## 6. The app cover (`Preview.png`) must be a ZeppOS **TGA**, not a PNG
+
+**Symptom:** The watch face installed and ran fine, but the **Zepp mobile app showed no
+cover/preview**.
+
+**Cause:** ZeppOS's native image format is TGA (with a `.png` extension). The watch firmware
+will read a plain PNG, but the **mobile app's cover loader needs the native TGA**. The reference
+faces' `Preview.png` is an uncompressed, color-mapped TGA with:
+- an 18-byte header: `idlen=46, cmaptype=1, imgtype=1, cmap_len=256, cmap_entrysize=32,
+  depth=8, desc=0x20`,
+- a **46-byte ID block**: `b"SOMHD\x01" + b"\x00"*40`,
+- a **256 × 32-bit BGRA** colormap, then 8-bit palette indices (top-left origin).
+
+**Fix:** Encode `assets/Preview.png` in exactly that format (keep the `.png` name). The current
+`Preview.png` is already a TGA full-render of the face.
+
+---
+
+## 7. `appId` must be unique
+
+**Symptom:** Cover didn't show in the app (compounding finding #6).
+
+**Cause:** Reusing another installed app's `appId` collides — the app already associates that id
+with the other face, so our cover wasn't shown.
+
+**Fix:** Give every face a unique `appId`. This project uses a deterministic 7-digit id derived
+from the source name (`1000000 + crc32(name) % 9000000` → `1742985`), distinct from the
+reference faces' ids.
+
+---
+
+## 8. Image format: indexed-P with 1-byte transparency
+
+All watch assets are RGBA→indexed **P-mode** PNGs with a 1-byte `tRNS` (palette index 0 =
+transparent, 1–255 opaque). This is what the firmware expects and keeps the package small.
+
+---
+
+## 9. Locale- and setting-driven fields
+
+These are controlled by the watch's settings, not by the face, so don't expect to "fix" them in
+layout:
+- **Temperature unit** (°C/°F) and **distance unit** (km/mi) follow the watch locale; the
+  distance **decimal point** (`dot_image: '0034.png'`) shows or not depending on the unit.
+- **AM/PM** is only meaningful in 12-hour mode (finding #4); it's hidden in 24-hour mode.
+
+---
+
+## Meta-lesson
+
+The Balance 2 firmware diverges from both the simulator and a naïve static renderer in several
+places (alignment, the TGA cover, sensor binding, animation, `IMG_DATE`). **The physical watch
+is the ground truth** — every one of the findings above was invisible until the face ran on the
+device and was photographed.

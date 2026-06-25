@@ -64,6 +64,17 @@ Sideload the produced archive onto the Balance 2 — via the Zepp app (Profile �
 Watch faces → add a custom face) or the developer bridge, the same way any custom face is
 installed.
 
+## Documentation
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — file roles, the `init_view` →
+  `WIDGET_DELEGATE` runtime lifecycle, the update functions, and a full widget inventory
+  (type, binding, asset, coordinates).
+- **[docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md)** — reusable Balance 2 / ZeppOS lessons
+  (symptom → cause → fix): `TEXT_IMG` alignment needs `w`, `IMG_LEVEL` `type`-binding limits,
+  why a bad call in `init_view` bricks the whole face, the `getTimeFormat` `0`/`1` gotcha, the
+  non-rendering `IMG_DATE`, the TGA cover requirement, and more.
+- **[docs/ASSETS.md](docs/ASSETS.md)** — the numbered-PNG asset index map.
+
 ## Known on-watch behaviors
 
 - **Distance gauge stays empty.** ZeppOS `DISTANCE` has no `_TARGET` and a `[0,99] km` range,

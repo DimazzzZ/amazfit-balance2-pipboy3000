@@ -259,30 +259,28 @@ function collectWidgets(folder) {
   // harmless callables (e.g. `@zos/router` SYSTEM_APP_* constants, `launchApp`) — none of the
   // click handlers run during a preview anyway.
   const anyMock = new Proxy(function () {}, { get: () => anyMock, apply: () => undefined })
+  const timers = []
+  // Mock activity sensors so build()'s updateGauges() produces representative levels.
+  class Step { getCurrent() { return 4000 } getTarget() { return 8000 } onChange() {} offChange() {} }
+  class Calorie { getCurrent() { return 150 } getTarget() { return 300 } onChange() {} offChange() {} }
+  class Distance { getCurrent() { return 3000 } onChange() {} offChange() {} }
+  class HeartRate { getCurrent() { return 90 } getLast() { return 90 } }
   const MODS = {
     '@zos/ui': hmUI,
-    '@zos/sensor': { Time },
-    '@zos/timer': { createTimer: () => 1, stopTimer: () => {} },
+    '@zos/sensor': { Time, Step, Calorie, Distance, HeartRate },
+    '@zos/timer': { createTimer: (_d, _p, cb) => { timers.push(cb); return timers.length }, stopTimer: () => {} },
   }
   const __require = (mod) => MODS[mod] || new Proxy({}, { get: () => anyMock })
   const WatchFace = (obj) => { if (obj && typeof obj.build === 'function') obj.build() }
 
   const fn = new Function('__require', 'WatchFace', src)
   fn(__require, WatchFace)
-  return widgets
+  return { widgets, timers }
 }
 
-// ---------------------------------------------------------------- render
-function renderToFile(folder, outPng) {
-  ASSETS = path.join(folder, 'assets')
-  if (!fs.readdirSync(ASSETS).some((f) => f.endsWith('.png'))) {
-    const sub = fs.readdirSync(ASSETS).find((dd) => fs.statSync(path.join(ASSETS, dd)).isDirectory())
-    if (sub) ASSETS = path.join(ASSETS, sub)
-  }
-
+// ---------------------------------------------------------------- render one frame
+function renderFrame(widgets) {
   const canvas = makeCanvas(480, 480)
-  const widgets = collectWidgets(folder)
-
   for (const { type, props } of widgets) {
     if (type === 'IMG' || type === 'IMG_STATUS') {
       if (props.src) alphaComposite(canvas, load(props.src), props.x || 0, props.y || 0)
@@ -290,7 +288,8 @@ function renderToFile(folder, outPng) {
       const ia = props.image_array || []
       if (!ia.length) continue
       let idx
-      if (props.type === 'WEEK') idx = MOCK.WEEK
+      if (props.level !== undefined) idx = props.level        // manual level via setProperty(MORE,{level})
+      else if (props.type === 'WEEK') idx = MOCK.WEEK
       else if (props.type === 'WEATHER_CURRENT') idx = MOCK.WEATHER_ICON
       else idx = Math.floor((ia.length - 1) * MOCK.GAUGE_FRAC)
       idx = Math.max(0, Math.min(idx, ia.length - 1))
@@ -317,11 +316,157 @@ function renderToFile(folder, outPng) {
       drawDigits(canvas, props.month_array, mm, props.month_startX || 0, props.month_startY || 0)
     }
   }
-
   roundClip(canvas)
-  fs.writeFileSync(outPng, encodePng(canvas.w, canvas.h, canvas.data))
-  console.log('wrote', outPng)
+  return canvas
+}
+
+function resolveAssets(folder) {
+  ASSETS = path.join(folder, 'assets')
+  if (!fs.readdirSync(ASSETS).some((f) => f.endsWith('.png'))) {
+    const sub = fs.readdirSync(ASSETS).find((dd) => fs.statSync(path.join(ASSETS, dd)).isDirectory())
+    if (sub) ASSETS = path.join(ASSETS, sub)
+  }
+}
+
+// ---------------------------------------------------------------- GIF89a encode (zero-dep)
+// Build a ≤256-colour palette by popularity across all frames; map each distinct RGB to the
+// nearest palette entry (cached). Frames are opaque, so no transparency is needed.
+function quantize(frames, w, h) {
+  const counts = new Map()
+  for (const f of frames) {
+    for (let i = 0; i < w * h; i++) {
+      const key = (f[i * 4] << 16) | (f[i * 4 + 1] << 8) | f[i * 4 + 2]
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+  }
+  const palKeys = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 256).map((e) => e[0])
+  if (!palKeys.includes(0)) { palKeys.pop(); palKeys.push(0) } // ensure black present
+  const palette = palKeys.map((k) => [(k >> 16) & 255, (k >> 8) & 255, k & 255])
+  const nearest = new Map()
+  const idxOf = (key) => {
+    let hit = nearest.get(key)
+    if (hit !== undefined) return hit
+    const r = (key >> 16) & 255, g = (key >> 8) & 255, b = key & 255
+    let best = 0, bd = Infinity
+    for (let p = 0; p < palette.length; p++) {
+      const dr = r - palette[p][0], dg = g - palette[p][1], db = b - palette[p][2]
+      const d = dr * dr + dg * dg + db * db
+      if (d < bd) { bd = d; best = p; if (d === 0) break }
+    }
+    nearest.set(key, best)
+    return best
+  }
+  const indexed = frames.map((f) => {
+    const out = Buffer.alloc(w * h)
+    for (let i = 0; i < w * h; i++) {
+      out[i] = idxOf((f[i * 4] << 16) | (f[i * 4 + 1] << 8) | f[i * 4 + 2])
+    }
+    return out
+  })
+  return { palette, indexed }
+}
+
+// GIF variable-width LZW for one frame's index buffer.
+// Mirrors the omggif / giflib encoder exactly (so standard decoders like PIL/browsers read it):
+// keys are (prefixCode * 256 + symbol); after emitting a prefix code, grow the width *before*
+// assigning the next code, using `next >= 2^codeSize`. Single symbols are their own code.
+function lzwEncode(indices, minCodeSize) {
+  const clear = 1 << minCodeSize
+  const eoi = clear + 1
+  let codeSize = minCodeSize + 1
+  let dict = new Map()
+  let next = eoi + 1
+
+  const out = []
+  let cur = 0, curBits = 0
+  const emit = (code) => {
+    cur |= code << curBits
+    curBits += codeSize
+    while (curBits >= 8) { out.push(cur & 0xff); cur >>= 8; curBits -= 8 }
+  }
+
+  emit(clear)
+  let ib = indices[0]
+  for (let i = 1; i < indices.length; i++) {
+    const k = indices[i]
+    const key = ib * 256 + k
+    if (dict.has(key)) {
+      ib = dict.get(key)
+    } else {
+      emit(ib)
+      if (next === 4096) {
+        emit(clear); dict = new Map(); next = eoi + 1; codeSize = minCodeSize + 1
+      } else {
+        if (next >= (1 << codeSize) && codeSize < 12) codeSize++
+        dict.set(key, next++)
+      }
+      ib = k
+    }
+  }
+  emit(ib)
+  emit(eoi)
+  if (curBits > 0) out.push(cur & 0xff)
+  return Buffer.from(out)
+}
+
+function subBlocks(data) {
+  const parts = []
+  for (let i = 0; i < data.length; i += 255) {
+    const chunk = data.subarray(i, i + 255)
+    parts.push(Buffer.from([chunk.length]), chunk)
+  }
+  parts.push(Buffer.from([0])) // block terminator
+  return Buffer.concat(parts)
+}
+
+function encodeGif(w, h, frames, delayMs) {
+  const { palette, indexed } = quantize(frames, w, h)
+  const gctSize = 256
+  const gct = Buffer.alloc(gctSize * 3)
+  palette.forEach((c, i) => { gct[i * 3] = c[0]; gct[i * 3 + 1] = c[1]; gct[i * 3 + 2] = c[2] })
+
+  const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b }
+  const parts = []
+  parts.push(Buffer.from('GIF89a', 'latin1'))
+  // Logical Screen Descriptor: w, h, packed (GCT present, 256 entries -> size code 7), bg, aspect
+  parts.push(u16(w), u16(h), Buffer.from([0xf7, 0, 0]), gct)
+  // NETSCAPE2.0 loop-forever extension
+  parts.push(Buffer.from([0x21, 0xff, 0x0b]), Buffer.from('NETSCAPE2.0', 'latin1'),
+    Buffer.from([0x03, 0x01, 0x00, 0x00, 0x00]))
+
+  const delay = Math.round(delayMs / 10) // GIF delay is in 1/100 s
+  for (const idx of indexed) {
+    // Graphic Control Extension: delay, no transparency
+    parts.push(Buffer.from([0x21, 0xf9, 0x04, 0x00]), u16(delay), Buffer.from([0x00, 0x00]))
+    // Image Descriptor (full frame, no local color table)
+    parts.push(Buffer.from([0x2c]), u16(0), u16(0), u16(w), u16(h), Buffer.from([0x00]))
+    const minCodeSize = 8
+    parts.push(Buffer.from([minCodeSize]), subBlocks(lzwEncode(idx, minCodeSize)))
+  }
+  parts.push(Buffer.from([0x3b])) // trailer
+  return Buffer.concat(parts)
+}
+
+// ---------------------------------------------------------------- CLI
+function main(folder, out, frameCount) {
+  resolveAssets(folder)
+  if (out.toLowerCase().endsWith('.gif')) {
+    const { widgets, timers } = collectWidgets(folder)
+    const FRAMES = frameCount || 8
+    const frames = []
+    for (let i = 0; i < FRAMES; i++) {
+      frames.push(renderFrame(widgets).data)
+      for (const cb of timers) { try { cb() } catch (e) {} } // advance the Vault Boy walk
+    }
+    fs.writeFileSync(out, encodeGif(480, 480, frames, 200))
+    console.log('wrote', out, `(${FRAMES} frames)`)
+  } else {
+    const { widgets } = collectWidgets(folder)
+    fs.writeFileSync(out, encodePng(480, 480, renderFrame(widgets).data))
+    console.log('wrote', out)
+  }
 }
 
 const out = process.argv[2] || 'preview.png'
-renderToFile(process.cwd(), out)
+const frameCount = process.argv[3] ? parseInt(process.argv[3], 10) : 0
+main(process.cwd(), out, frameCount)

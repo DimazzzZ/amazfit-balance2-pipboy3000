@@ -46,11 +46,19 @@ pick the level from the metric automatically.
 - **Two `IMG_LEVEL`s cannot share the same `type`.** Binding both the Distance and Steps gauges
   to `STEP` only drives one of them; the other stays at level 0.
 
-**Consequence in this project:** the Distance gauge is bound to `type: STEP` purely so it
-renders cleanly, but it stays empty on-watch (known/accepted). To make it actually fill, drive
-its level manually (see finding #3 for the safe way) — read the distance sensor and call
-`gauge.setProperty(hmUI.prop.MORE, { level })` from inside a timer/`resume_call`, never via a
-sensor listener in `init_view()`.
+- **A `type`-bound gauge level can disagree with the `type`-bound *number*.** On-watch the
+  `IMG_LEVEL type:CAL` bar read ~full while the `TEXT_IMG type:CAL` number showed only 27 kcal —
+  the firmware maps the gauge level off a different calorie basis/goal than the active-kcal value
+  it puts in the number. So even where `type` "works", the bar may not track what the user reads.
+
+**Resolution in this project (current):** all four metric gauges drop `type` and set their level
+**manually** from `@zos/sensor` — `Step`/`Calorie` (`getCurrent`/`getTarget`), `Distance`
+(`getCurrent`/full-scale), `HeartRate` (`getCurrent`/`getLast` over a range) — via
+`gauge.setProperty(hmUI.prop.MORE, { level })`, computed in an `updateGauges()` run on each
+sensor's `onChange` + a timer. This makes the bar track the same value as the number, accurate at
+low data, and finally lets the Distance gauge reflect distance. Needs the
+`data:user.hd.{step,calorie,distance,heart_rate}` permissions. (In modern `@zos`, registering
+`sensor.onChange` in `build()` is safe — unlike the legacy `init_view` crash in finding #3.)
 
 ---
 

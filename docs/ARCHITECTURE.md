@@ -60,23 +60,27 @@ Coordinates are in the 480-px design space, straight from `watchface/index.js`.
 | Weather icon | `IMG_LEVEL` | `WEATHER_CURRENT` | `0079`–`0105` (27) | 330,78 |
 | Temperature value | `TEXT_IMG` | `WEATHER_CURRENT` | `0011`–`0020`, neg `0021` | 338,78 (56×24), align RIGHT |
 | Degree ° | `IMG` | — | `0023` | 394,78 |
-| Vault Boy | `IMG` (animated) | 200 ms timer | `0057`–`0064` | 183,130 |
+| Vault Boy | `IMG` (animated) | 200 ms timer | `0057`–`0064` | 195,130 |
 | Time HH / MM / SS | `IMG_TIME` | autonomous | HH·MM `0001`–`0010`; SS `0011`–`0020` | 328,132 / 328,246 / 371,348 |
 | Calories | `TEXT_IMG` | `CAL` | `0069`–`0078` | 17,149 (72×24), align RIGHT |
 | Pulse | `TEXT_IMG` | `HEART` | `0069`–`0078` | 15,216 (58×24), align RIGHT |
 | Distance | `TEXT_IMG` | `DISTANCE` | `0069`–`0078`, dot `0034` | 8,277 (80×24), align RIGHT |
 | Steps | `TEXT_IMG` | `STEP` | `0069`–`0078` | 195,369 (96×24), align CENTER_H |
-| Calories gauge | `IMG_LEVEL` | `CAL` | `0200`–`0205` | 90,159 (69×15) |
-| Pulse gauge | `IMG_LEVEL` | `HEART` | `0206`–`0211` | 73,224 (72×13) |
-| Distance gauge | `IMG_LEVEL` | `STEP` ⚠️ | `0212`–`0217` | 90,286 (69×15) |
-| Steps gauge | `IMG_LEVEL` | `STEP` | `0218`–`0223` | 194,349 (91×15) |
+| Calories gauge | `IMG_LEVEL` | manual (Calorie sensor) | `0200`–`0205` | 90,159 (69×15) |
+| Pulse gauge | `IMG_LEVEL` | manual (HeartRate sensor) | `0206`–`0211` | 73,224 (72×13) |
+| Distance gauge | `IMG_LEVEL` | manual (Distance sensor) | `0212`–`0217` | 90,286 (69×15) |
+| Steps gauge | `IMG_LEVEL` | manual (Step sensor) | `0218`–`0223` | 194,349 (91×15) |
 | Battery value | `TEXT_IMG` | `BATTERY` | `0069`–`0078` | 74,379 (58×24), align RIGHT |
 | Battery % | `IMG` | — | `0035` | 132,379 |
 | Disconnect / Lock / Alarm | 3× `IMG_STATUS` | `DISCONNECT`/`LOCK`/`CLOCK` | `0054`/`0052`/`0055` | 312/351/405, ~367 |
 
-⚠️ The Distance gauge is bound to `type: STEP` so it renders without error, but it stays empty
-on-watch (`DISTANCE` can't be `type`-bound, and two `IMG_LEVEL`s can't share `STEP`). See
-[ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md).
+The four metric gauges set their level **manually** in `updateGauges()` from `@zos/sensor`
+(`Step`/`Calorie`/`Distance`/`HeartRate` — the same data the numbers show) via
+`setProperty(hmUI.prop.MORE, { level })`, refreshed on each sensor's `onChange` and the 60 s timer.
+`type`-binding was dropped because the firmware's `type:CAL` level didn't track the active-kcal
+number (it over-filled at low data) and `DISTANCE` has no goal to bind. Levels: Cal `current/target`,
+Steps `current/target`, Distance `current/DIST_FULL_M` (~10 km full), Pulse linear over `[40,180]`.
+Requires the `data:user.hd.{step,calorie,distance,heart_rate}` permissions in `app.json`.
 
 ## Tap-to-launch shortcuts
 
@@ -100,11 +104,13 @@ widgets — hit area is `w×h`, drawn with `transparent.png`. Each `click_func` 
 
 ## Preview
 
-`node preview.js [out.png]` (default `preview.png`) composites the face to a 480×480 PNG locally
-(round-clipped, with mock data) so the layout can be checked **before flashing a watch**. It's a
-zero-dependency Node script (built-in `zlib` only — no npm install): it parses the
-`hmUI.createWidget(...)` calls in `watchface/index.js` (resolving the named sprite-group
-constants) and decodes/encodes the PNGs itself. An approximation of firmware rendering — good
+`node preview.js [out]` composites the face to a 480×480 image locally (round-clipped, with mock
+data) so the layout can be checked **before flashing a watch**. Default output `preview.png`; an
+output ending in `.gif` renders an **animated GIF** (the Vault Boy walk — 8 frames @ 200 ms;
+optional 2nd arg = frame count). It's a zero-dependency Node script (built-in `zlib` only — no
+npm install): it **executes** `watchface/index.js` under mocked `@zos` modules to capture the
+real `createWidget(...)` specs (and timer callbacks, for animation frames), and decodes/encodes
+the PNGs — and the GIF (GIF89a + LZW) — itself. An approximation of firmware rendering — good
 for position/presence, not a substitute for the device on data-driven fields. For a live
 preview, `zeus preview` against the Zepp OS Simulator / a paired device.
 

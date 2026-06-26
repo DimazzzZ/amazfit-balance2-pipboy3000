@@ -5,7 +5,7 @@ display), built as a native ZeppOS app. Bright phosphor-green UI on a dark CRT-s
 background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬС, РАССТОЯНИЕ, ШАГИ, БАТАРЕЯ,
 ТЕМПЕРАТУРА) and an animated Vault Boy.
 
-![Preview](preview.png)
+![Pip-Boy 3000 — Amazfit Balance 2 watch face](preview.gif)
 
 ## Features
 
@@ -42,7 +42,8 @@ project into the device package.
 │       ├── transparent.png
 │       └── fonts/2Expansiva-bold.ttf
 ├── preview.js                   # zero-dep Node previewer (runs the face under mocked @zos)
-├── preview.png                  # rendered preview for this README
+├── preview.gif                  # animated preview (Vault Boy walk) — README hero
+├── preview.png                  # static rendered preview
 ├── docs/                        # architecture, ZeppOS findings, asset map
 ├── .gitignore                   # ignores build output (dist/, .zeus/, *.zab/.zpk, node_modules/)
 └── README.md
@@ -74,13 +75,17 @@ needed for a local build. The `dist/` output is gitignored.
 ## Preview (before flashing)
 
 ```bash
-node preview.js [out.png]        # default: preview.png
+node preview.js                  # → preview.png (static)
+node preview.js preview.gif      # → animated GIF (Vault Boy walk cycle, 8 frames @ 200 ms)
+node preview.js out.gif 16       # optional 2nd arg = frame count
 ```
 
 A **zero-dependency** Node script (built-in `zlib` only). It runs `watchface/index.js` under
 mocked `@zos` modules, captures the actual `createWidget(...)` calls, and composites the PNG
-assets to a 480×480 image with mock data — so the layout can be checked with no watch. It's an
-approximation (no live sensors/animation); for a true device/simulator preview use `zeus preview`.
+assets to a 480×480 image with mock data — so the layout can be checked with no watch. A `.gif`
+output renders multiple frames (advancing the animation timers) and encodes an animated GIF
+(hand-rolled GIF89a + LZW, still zero-dep). It's an approximation (mock data, no live sensors);
+for a true device/simulator preview use `zeus preview`.
 
 ## Install
 

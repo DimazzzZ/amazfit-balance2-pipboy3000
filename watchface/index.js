@@ -1,7 +1,7 @@
 import * as hmUI from '@zos/ui'
 import { Time, Step, Calorie, Distance, HeartRate } from '@zos/sensor'
 import { createTimer, stopTimer } from '@zos/timer'
-import { getScreenType, SCREEN_TYPE_AOD } from '@zos/display'
+import { getLanguage } from '@zos/settings'
 import {
   launchApp, SYSTEM_APP_STATUS, SYSTEM_APP_HR, SYSTEM_APP_WEATHER,
   SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM, SYSTEM_APP_COUNTDOWN,
@@ -26,8 +26,9 @@ const PULSE_BARS = ['0206.png', '0207.png', '0208.png', '0209.png', '0210.png', 
 const DIST_BARS = ['0212.png', '0213.png', '0214.png', '0215.png', '0216.png', '0217.png']
 const STEP_BARS = ['0218.png', '0219.png', '0220.png', '0221.png', '0222.png', '0223.png']
 const WEEK_IMG = ['0026.png', '0027.png', '0028.png', '0029.png', '0030.png', '0031.png', '0032.png']
+const EN_WEEK_IMG = ['0226.png', '0227.png', '0228.png', '0229.png', '0230.png', '0231.png', '0232.png']
 const WEATHER_IMG = Array.from({ length: 27 }, (_, i) => `${(79 + i).toString().padStart(4, '0')}.png`)
-const VAULT_FRAMES = ['0057.png', '0058.png', '0059.png', '0060.png', '0061.png', '0062.png', '0063.png', '0064.png']
+// Vault Boy walk: firmware-driven IMG_ANIM over frames pipboy_0.png … pipboy_7.png.
 
 // Date digits sit at these absolute x positions (snug to the baked separator dots), y=78.
 const DATE_X = [82, 94, 111, 123, 143, 155, 167, 179]
@@ -39,8 +40,16 @@ const DIST_FULL_M = 10000  // distance bar full at ~10 km
 const HR_MIN = 40          // pulse bar maps linearly over [HR_MIN, HR_MAX]
 const HR_MAX = 180
 
-const VAULT_PERIOD = 200    // ms per Vault Boy frame
 const REFRESH_PERIOD = 60000 // ms between date/gauge refreshes
+
+// Labels + weekday names are baked into the images, so language = which baked assets to use.
+// getLanguage() returns a numeric code; en-US is 2 in the ZeppOS multilingual map. English →
+// the English-label background + English weekday sprites; any other language stays Russian.
+let _lang = -1
+try { _lang = getLanguage() } catch (e) { /* default to Russian */ }
+const EN = _lang === 2
+const BG_SRC = EN ? '0000_en.png' : '0000.png'
+const WEEK_ARRAY = EN ? EN_WEEK_IMG : WEEK_IMG
 
 const timeSensor = new Time()
 const stepSensor = new Step()
@@ -71,11 +80,11 @@ const GAUGES = [
 WatchFace({
   build() {
     // ---- Background ----
-    hmUI.createWidget(hmUI.widget.IMG, { x: 0, y: 0, w: 480, h: 480, src: '0000.png' })
+    hmUI.createWidget(hmUI.widget.IMG, { x: 0, y: 0, w: 480, h: 480, src: BG_SRC })
 
-    // ---- Day of week (auto-bound) ----
+    // ---- Day of week (auto-bound; English/Russian sprites per watch language) ----
     hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-      x: 150, y: 24, image_array: WEEK_IMG, image_length: 7, type: hmUI.data_type.WEEK,
+      x: 150, y: 24, image_array: WEEK_ARRAY, image_length: 7, type: hmUI.data_type.WEEK,
     })
 
     // ---- Date DD.MM.YYYY: per-digit IMGs, refreshed from the Time sensor ----
@@ -93,8 +102,15 @@ WatchFace({
     })
     hmUI.createWidget(hmUI.widget.IMG, { x: 394, y: 78, src: '0023.png' }) // degree °
 
-    // ---- Vault Boy (animated; frames cycled by the timer while visible) ----
-    this._vault = hmUI.createWidget(hmUI.widget.IMG, { x: 195, y: 130, src: VAULT_FRAMES[0] })
+    // ---- Vault Boy (firmware-driven sprite animation: IMG_ANIM over pipboy_0..7) ----
+    // Native widget = the firmware cycles the frames; no manual timer (robust on Balance 2,
+    // where the old getScreenType-gated timer froze — see docs/ZEPPOS-FINDINGS.md #13).
+    hmUI.createWidget(hmUI.widget.IMG_ANIM, {
+      x: 186, y: 130,
+      anim_path: '', anim_prefix: 'pipboy', anim_ext: 'png',
+      anim_fps: 8, anim_size: 8, anim_repeat: true, repeat_count: 255,
+      anim_status: hmUI.anim_status.START,
+    })
 
     // ---- Time: hours/minutes (big) + seconds (small), auto-bound ----
     hmUI.createWidget(hmUI.widget.IMG_TIME, {
@@ -163,9 +179,9 @@ WatchFace({
     safe(() => calSensor.onChange(this._onGauge))
     safe(() => distSensor.onChange(this._onGauge))
 
-    // The periodic refresh + walk animation run only while the face is visible (battery / AOD).
-    // resume_call/pause_call fire on show/hide; we also resume now so the first paint + walk
-    // don't wait on the first resume event.
+    // The periodic date/gauge refresh runs only while the face is visible (battery). resume_call/
+    // pause_call fire on show/hide; we also resume now so the first paint doesn't wait on resume.
+    // (The Vault Boy walk is the firmware-driven IMG_ANIM widget above — independent of this.)
     hmUI.createWidget(hmUI.widget.WIDGET_DELEGATE, {
       resume_call: () => this.onResume(),
       pause_call: () => this.onPause(),
@@ -173,7 +189,8 @@ WatchFace({
     safe(() => this.onResume())
   },
 
-  // Start the periodic timers + walk cycle (idempotent). Skips the animation in AOD.
+  // Start the periodic date/gauge refresh (idempotent). The Vault Boy walk is a native IMG_ANIM
+  // widget driven by the firmware, so it needs no timer here.
   onResume() {
     if (this._running) return
     this._running = true
@@ -185,21 +202,12 @@ WatchFace({
         this.updateGauges()
       })
     }
-    if (!this._vaultTimer && safe(() => getScreenType()) !== SCREEN_TYPE_AOD) {
-      this._vaultIndex = 0
-      this._vaultTimer = createTimer(0, VAULT_PERIOD, () => {
-        if (safe(() => getScreenType()) === SCREEN_TYPE_AOD) return
-        this._vaultIndex = (this._vaultIndex + 1) % VAULT_FRAMES.length
-        this._vault.setProperty(hmUI.prop.SRC, VAULT_FRAMES[this._vaultIndex])
-      })
-    }
   },
 
-  // Stop the timers when the face is hidden (saves battery; no animation off-screen).
+  // Stop the refresh timer when the face is hidden (saves battery).
   onPause() {
     this._running = false
     if (this._refreshTimer) { stopTimer(this._refreshTimer); this._refreshTimer = undefined }
-    if (this._vaultTimer) { stopTimer(this._vaultTimer); this._vaultTimer = undefined }
   },
 
   updateGauges() {

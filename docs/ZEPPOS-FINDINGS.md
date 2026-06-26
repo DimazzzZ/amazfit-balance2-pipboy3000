@@ -251,11 +251,27 @@ names usable with the legacy `hmApp.startApp({ url, native: true })` (e.g. `Sett
 
 ---
 
-## 13. Pause animations off-screen + skip them in AOD (battery / burn-in)
+## 13. Prefer the native `IMG_ANIM` widget for sprite animation; never gate it on `getScreenType()`
 
-A free-running animation timer (here the 200 ms Vault Boy walk) keeps firing even when the
-watchface is hidden or the screen is in always-on display — wasting battery and risking OLED
-burn-in. Best practice:
+**Best path — `IMG_ANIM`.** For a looping sprite animation (the Vault Boy walk), use the native
+`hmUI.widget.IMG_ANIM` widget and let the **firmware** cycle the frames — no JS timer at all:
+
+```js
+hmUI.createWidget(hmUI.widget.IMG_ANIM, {
+  x, y, anim_path: '', anim_prefix: 'pipboy', anim_ext: 'png',
+  anim_fps: 8, anim_size: 8, anim_repeat: true, repeat_count: 255,
+  anim_status: hmUI.anim_status.START,
+})
+```
+
+It loads frames `<anim_prefix>_<0..anim_size-1>.<anim_ext>` (here `pipboy_0.png`…`pipboy_7.png`),
+plays them at `anim_fps`, and the firmware handles visibility — robust on the Balance 2. Control
+playback with `setProperty(hmUI.prop.ANIM_STATUS, hmUI.anim_status.START)` if needed. This is what
+the project ships; it replaced the manual timer below.
+
+**If you must hand-roll it with `createTimer` + `setProperty(prop.SRC, frame)`** (the project did
+this first, and it works *once you avoid the trap below*): a free-running timer keeps firing while
+the face is hidden — wasting battery — so tie it to the visibility delegate:
 
 - Register a **`WIDGET_DELEGATE`** with `resume_call`/`pause_call`; create the repeating timers in
   `resume_call` and `stopTimer()` them in `pause_call` (and `onDestroy`), so they only run while
@@ -263,13 +279,50 @@ burn-in. Best practice:
 - Also call your resume logic **once at the end of `build()`** so the first paint/animation doesn't
   wait on the first resume event — guard it (`if (this._running) return`) so it's idempotent if
   `resume_call` then fires.
-- **Skip the animation in AOD:** `import { getScreenType, SCREEN_TYPE_AOD } from '@zos/display'`
-  and don't advance frames when `getScreenType() === SCREEN_TYPE_AOD`.
+
+**⚠️ Do NOT gate the animation on `getScreenType()` on the Balance 2.** An earlier version tried to
+skip the walk in AOD with `getScreenType() === SCREEN_TYPE_AOD` (both at timer-creation time and per
+frame). On this device `getScreenType()` **matches `SCREEN_TYPE_AOD` during the normal watchface
+render**, so the Vault Boy timer was never created and frames were skipped — the boy stayed frozen
+while the **ungated** refresh timer kept the date/gauges updating (classic symptom: "everything
+moves except the animation"). The fix: create the walk timer **unconditionally** in `resume_call`
+and advance every tick; let the `resume_call`/`pause_call` delegate alone start/stop it. That still
+stops the walk whenever the face is hidden (the common AOD path also pauses the face), without
+trusting an unreliable screen-type read. If you ever need true AOD-only behavior, use a dedicated
+AOD build/render rather than branching on `getScreenType()` here.
 
 Keep the static one-shot paint (date/gauges) in `build()` so the face is correct immediately even
 before the first resume. (For maximum robustness wrap sensor/router/timer calls in a tiny
 `safe(fn)` try/catch helper — a not-ready sensor then degrades to an empty gauge instead of a
 broken build.)
+
+---
+
+## 14. Localizing *image* labels: per-language baked assets picked by `getLanguage()`
+
+When the on-screen labels are **baked into images** (here the background `0000.png` and the
+weekday sprites) rather than rendered as text, you cannot localize them with `app.json`'s string
+`i18n` (that only translates the app *name* shown in the phone app). Instead, **ship one set of
+baked assets per language and select the set at runtime**:
+
+- `import { getLanguage } from '@zos/settings'`. It returns a **number**, not a string — in the
+  ZeppOS multilingual map **en-US is `2`**. Read it once at module load: `const EN =
+  getLanguage() === 2` (wrap in try/catch and default to the fallback language; a not-ready read
+  shouldn't break the face).
+- Make only the language-dependent widgets switch on it: the background `IMG` `src`
+  (`0000_en.png` vs `0000.png`) and the weekday `IMG_LEVEL` `image_array` (`0226`–`0232` vs
+  `0026`–`0032`). Keep them on **one shared coordinate set** by building the alternate background
+  as the *same* layout with the labels re-lettered in place — then numbers/gauges/time need no
+  per-language tuning.
+- Generating the alternate background: erase each label from the base background by copying the
+  adjacent texture (for a CRT-scanline field, copy a clean patch from directly above/beside the
+  label at an **even** row offset so the scanline parity matches — a flat fill or a far-sampled
+  median shows up as a visibly darker block), then composite the translated word (keyed to its
+  lit pixels) at the same anchor.
+- Verify both languages before flashing: the local previewer mocks `getLanguage()` (env
+  `PREVIEW_LANG=en` → `2`) so you can render each language headless. Confirm on-device by changing
+  the watch's system language; if it doesn't switch, the assumed numeric code is wrong — adjust
+  the constant.
 
 ---
 

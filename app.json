@@ -4,7 +4,7 @@
     "appId": 1742985,
     "appName": "PipBoy3000",
     "appType": "watchface",
-    "version": { "code": 5, "name": "1.0.4" },
+    "version": { "code": 11, "name": "1.0.10" },
     "icon": "Preview.png",
     "cover": ["Preview.png"],
     "vender": "zepp",

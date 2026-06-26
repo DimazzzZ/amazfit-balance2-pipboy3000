@@ -223,7 +223,8 @@ function transformImports(src) {
 }
 
 // Execute watchface/index.js and return the ordered list of created widgets.
-function collectWidgets(folder) {
+// `lang` ('ru' | 'en') drives the mocked getLanguage() so the right baked assets are picked.
+function collectWidgets(folder, lang) {
   let src = fs.readFileSync(path.join(folder, 'watchface', 'index.js'), 'utf8')
   src = transformImports(src)
 
@@ -231,7 +232,7 @@ function collectWidgets(folder) {
   const hmUI = {
     widget: nameProxy(), data_type: nameProxy(), align: nameProxy(),
     system_status: nameProxy(), show_level: nameProxy(), text_style: nameProxy(),
-    prop: nameProxy(),
+    prop: nameProxy(), anim_status: nameProxy(),
     createWidget(type, props) {
       const w = {
         type,
@@ -270,6 +271,8 @@ function collectWidgets(folder) {
     '@zos/sensor': { Time, Step, Calorie, Distance, HeartRate },
     '@zos/timer': { createTimer: (_d, _p, cb) => { timers.push(cb); return timers.length }, stopTimer: () => {} },
     '@zos/display': { getScreenType: () => 0, SCREEN_TYPE_AOD: 2 }, // 0 = normal -> walk animates in preview
+    // Watch language: en-US is code 2 in the ZeppOS map; anything else -> Russian assets.
+    '@zos/settings': { getLanguage: () => (lang === 'en' ? 2 : 0) },
   }
   const __require = (mod) => MODS[mod] || new Proxy({}, { get: () => anyMock })
   const WatchFace = (obj) => { if (obj && typeof obj.build === 'function') obj.build() }
@@ -280,11 +283,16 @@ function collectWidgets(folder) {
 }
 
 // ---------------------------------------------------------------- render one frame
-function renderFrame(widgets) {
+function renderFrame(widgets, frame = 0) {
   const canvas = makeCanvas(480, 480)
   for (const { type, props } of widgets) {
     if (type === 'IMG' || type === 'IMG_STATUS') {
       if (props.src) alphaComposite(canvas, load(props.src), props.x || 0, props.y || 0)
+    } else if (type === 'IMG_ANIM') {
+      // Firmware-cycled sprite animation; pick the frame for this preview step.
+      const n = props.anim_size || 1
+      const src = `${props.anim_prefix}_${frame % n}.${props.anim_ext || 'png'}`
+      alphaComposite(canvas, load(src), props.x || 0, props.y || 0)
     } else if (type === 'IMG_LEVEL') {
       const ia = props.image_array || []
       if (!ia.length) continue
@@ -449,20 +457,32 @@ function encodeGif(w, h, frames, delayMs) {
 }
 
 // ---------------------------------------------------------------- CLI
+// Render `n` walk frames for one language (advancing the captured Vault Boy timers each step).
+function walkFrames(folder, lang, n) {
+  const { widgets } = collectWidgets(folder, lang)
+  const frames = []
+  for (let i = 0; i < n; i++) frames.push(renderFrame(widgets, i).data) // frame i drives IMG_ANIM
+  return frames
+}
+
 function main(folder, out, frameCount) {
   resolveAssets(folder)
+  // PREVIEW_LANG forces a single language ('ru'|'en'); unset => both (for the GIF hero).
+  const forced = process.env.PREVIEW_LANG === 'en' ? 'en'
+    : (process.env.PREVIEW_LANG === 'ru' ? 'ru' : null)
   if (out.toLowerCase().endsWith('.gif')) {
-    const { widgets, timers } = collectWidgets(folder)
-    const FRAMES = frameCount || 8
-    const frames = []
-    for (let i = 0; i < FRAMES; i++) {
-      frames.push(renderFrame(widgets).data)
-      for (const cb of timers) { try { cb() } catch (e) {} } // advance the Vault Boy walk
+    const per = frameCount || 8
+    let frames
+    if (forced) {
+      frames = walkFrames(folder, forced, per)
+    } else {
+      // Multilingual hero: walk in English, then walk in Russian — loops as a language switch.
+      frames = walkFrames(folder, 'en', per).concat(walkFrames(folder, 'ru', per))
     }
     fs.writeFileSync(out, encodeGif(480, 480, frames, 200))
-    console.log('wrote', out, `(${FRAMES} frames)`)
+    console.log('wrote', out, `(${frames.length} frames${forced ? ', ' + forced : ', en+ru'})`)
   } else {
-    const { widgets } = collectWidgets(folder)
+    const { widgets } = collectWidgets(folder, forced || 'ru')
     fs.writeFileSync(out, encodePng(480, 480, renderFrame(widgets).data))
     console.log('wrote', out)
   }

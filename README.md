@@ -2,17 +2,21 @@
 
 A Fallout-style **Pip-Boy 3000** watch face for the **Amazfit Balance 2** (480×480 round
 display), built as a native ZeppOS app. Bright phosphor-green UI on a dark CRT-scanline
-background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬС, РАССТОЯНИЕ, ШАГИ, БАТАРЕЯ,
-ТЕМПЕРАТУРА) and an animated Vault Boy.
+background, with an animated Vault Boy and **English or Russian labels** (TIME/ВРЕМЯ,
+KCAL/ККАЛ, HEART/ПУЛЬС, DISTANCE/РАССТОЯНИЕ, STEPS/ШАГИ, BATTERY/БАТАРЕЯ, TEMPERATURE/
+ТЕМПЕРАТУРА, weekday names).
 
-> **Language: Russian only (for now).** All on-screen labels and the weekday names are baked
-> into the image assets (`0000.png` background + the weekday sprites) in Russian — there is no
-> locale/i18n switch yet. Other languages would require redrawn assets (see
-> [docs/ASSETS.md](docs/ASSETS.md)).
+> **Language: English + Russian, auto-switched by the watch's language.** Labels and the
+> weekday names are baked into the image assets (the background + the weekday sprites), so the
+> face picks the matching set at startup from `getLanguage()` (`@zos/settings`): English (en-US)
+> → the English background + weekday sprites; **any other language → Russian**. Everything else
+> (numbers, gauges, time, date, Vault Boy, weather, status) is language-neutral. Adding a third
+> language = another baked background + weekday set (see [docs/ASSETS.md](docs/ASSETS.md)).
 
 <p align="center">
-  <img src="preview.gif" alt="Pip-Boy 3000 — Amazfit Balance 2 watch face" width="240">
+  <img src="preview.gif" alt="Pip-Boy 3000 — Amazfit Balance 2 watch face (English & Russian)" width="240">
 </p>
+<p align="center"><sub>Vault Boy walking — cycling English ↔ Russian (the face auto-switches with the watch language).</sub></p>
 
 ## Features
 
@@ -20,7 +24,7 @@ background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬ�
 - **Date** — `DD.MM.YYYY`, drawn per-digit from the time sensor and snugged to the
   background's separator dots.
 - **Day of week** — top banner (ВТОРНИК, etc.).
-- **Animated Vault Boy** — 8-frame walk cycle (≈200 ms/frame).
+- **Animated Vault Boy** — 8-frame walk cycle, driven by the native `IMG_ANIM` widget (firmware-paced).
 - **Activity gauges** — Calories / Pulse / Distance / Steps are sensor-driven: each bar always
   shows its green frame and fills by value toward its goal (accurate even at near-zero morning
   data — see [docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md) #2).
@@ -89,9 +93,15 @@ needed for a local build. The `dist/` output is gitignored.
 
 ```bash
 node preview.js                  # → preview.png (static)
-node preview.js preview.gif      # → animated GIF (Vault Boy walk cycle, 8 frames @ 200 ms)
-node preview.js out.gif 16       # optional 2nd arg = frame count
+node preview.js preview.gif      # → bilingual animated GIF (Vault Boy walk, English then Russian)
+node preview.js out.gif 16       # optional 2nd arg = frames *per language*
+PREVIEW_LANG=en node preview.js preview-en.png   # static render, English labels + weekday
+PREVIEW_LANG=ru node preview.js preview-ru.gif   # single-language GIF (force one language)
 ```
+
+By default a `.gif` output is **bilingual** — it walks the Vault Boy in English, then in Russian,
+and loops, to show the language auto-switch (this is the README hero). Set `PREVIEW_LANG=en`/`ru`
+to force a single language; PNG output renders one still frame (Russian unless `PREVIEW_LANG=en`).
 
 A **zero-dependency** Node script (built-in `zlib` only). It runs `watchface/index.js` under
 mocked `@zos` modules, captures the actual `createWidget(...)` calls, and composites the PNG
@@ -143,7 +153,7 @@ above; [`ci`](.github/workflows/ci.yml) build-checks every push/PR to `main`.
 ## Documentation
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — file roles, the `build → onResume/onPause`
-  lifecycle (timers pause off-screen; walk skipped in AOD), `data_type` auto-binding vs the
+  lifecycle (timers pause off-screen), `data_type` auto-binding vs the
   imperative date/gauge/animation drivers, and a full widget inventory.
 - **[docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md)** — reusable Balance 2 / ZeppOS lessons
   (symptom → cause → fix): `TEXT_IMG` alignment needs `w`; `IMG_LEVEL` `type`-binding limits and
@@ -162,8 +172,9 @@ above; [`ci`](.github/workflows/ci.yml) build-checks every push/PR to `main`.
   (`DIST_FULL_M`, `HR_MIN`/`HR_MAX`, `CAL_GOAL`/`STEP_GOAL` fallbacks) are tunable in
   `watchface/index.js`. Needs the `data:user.hd.{step,calorie,distance,heart_rate}` permissions.
 - **Power-aware.** The Vault Boy walk and the periodic refresh run only while the face is shown
-  (a `WIDGET_DELEGATE` stops the timers on hide), and the animation is skipped in always-on
-  display (AOD) — so it doesn't burn battery off-screen.
+  (a `WIDGET_DELEGATE` stops the timers on hide) — so they don't burn battery off-screen. (The
+  walk is intentionally *not* gated on `getScreenType()`; that read is unreliable on the Balance 2
+  and froze the animation — see [docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md) #13.)
 - **Temperature & distance units** (°C/°F, km/mi, decimal point) follow the watch's
   locale/unit settings.
 - The **date** is drawn per-digit and refreshed from the `Time` sensor (kept per-digit so the

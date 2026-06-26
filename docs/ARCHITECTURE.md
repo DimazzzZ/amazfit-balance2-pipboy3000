@@ -28,7 +28,7 @@ re-authoring as `@zos` source — see finding #11 in [ZEPPOS-FINDINGS.md](ZEPPOS
 ```js
 WatchFace({
   build()        { /* create every widget; register sensor onChange + a WIDGET_DELEGATE; onResume() */ },
-  onResume()     { /* (re)start the refresh + Vault Boy timers — skips the walk in AOD */ },
+  onResume()     { /* (re)start the date/gauge refresh timer while the face is shown */ },
   onPause()      { /* stop the timers while the face is hidden (battery) */ },
   updateGauges() { /* set each gauge IMG's src from its sensor fraction */ },
   updateDate()   { /* refresh the per-digit date from the Time sensor */ },
@@ -44,15 +44,18 @@ day-of-week. Three things are imperative:
 |--------|--------------|
 | `updateDate()` | Reads `Time.getDate()/getMonth()/getFullYear()`, zero-pads to `DDMMYYYY`, sets each of the 8 per-digit date `IMG`s' `SRC` (`0011`–`0020`). Per-digit (not `IMG_DATE`) keeps the digits pixel-aligned to the baked separator dots. |
 | `updateGauges()` | For each of the 4 gauges (a data-driven `GAUGES` table), reads its sensor fraction, maps to a 0–5 level, and sets the gauge `IMG`'s `SRC` to that fill sprite. Runs on sensor `onChange` + the refresh timer. |
-| Vault Boy timer (200 ms) | Cycles the Vault Boy `IMG`'s `SRC` through the 8 frames `0057`–`0064`. |
 
-**Lifecycle / battery.** The refresh timer (60 s, drives `updateDate`+`updateGauges`) and the
-200 ms Vault Boy timer are created in `onResume()` and stopped in `onPause()` via a
-`WIDGET_DELEGATE` (`resume_call`/`pause_call`), so they don't run while the face is hidden;
-`onResume()` is also called once at the end of `build()` so the first paint/animation doesn't wait
-on the first resume event (idempotent via a `_running` guard). The walk animation is **skipped in
-AOD** (`getScreenType() === SCREEN_TYPE_AOD`). Risky sensor/router calls are wrapped in a small
-`safe()` helper.
+The **Vault Boy walk is not driven by JS** — it's a native `IMG_ANIM` widget (the firmware cycles
+frames `pipboy_0`–`pipboy_7` at `anim_fps: 8`, `anim_repeat`), created once in `build()`. (An earlier
+manual `createTimer` + `setProperty(SRC)` version froze on the Balance 2 when gated on
+`getScreenType()` — see finding #13 in [ZEPPOS-FINDINGS.md](ZEPPOS-FINDINGS.md); `IMG_ANIM` sidesteps
+manual timers entirely.)
+
+**Lifecycle / battery.** The refresh timer (60 s, drives `updateDate`+`updateGauges`) is created in
+`onResume()` and stopped in `onPause()` via a `WIDGET_DELEGATE` (`resume_call`/`pause_call`), so it
+doesn't run while the face is hidden; `onResume()` is also called once at the end of `build()` so
+the first paint doesn't wait on the first resume event (idempotent via a `_running` guard). Risky
+sensor/router calls are wrapped in a small `safe()` helper.
 
 Everything else (`IMG_TIME` hour/minute/second, the metric `TEXT_IMG`s, weather, battery,
 `IMG_STATUS` icons) is declarative and bound by `data_type`/`system_status`. The four gauge bars
@@ -64,13 +67,13 @@ Coordinates are in the 480-px design space, straight from `watchface/index.js`.
 
 | Element | Widget | `type` / binding | Asset(s) | x, y (w×h) |
 |---------|--------|------------------|----------|------------|
-| Background | `IMG` | — | `0000` | 0,0 (480×480) |
-| Day of week | `IMG_LEVEL` | `WEEK` | `0026`–`0032` | 150,24 |
+| Background | `IMG` | — | `0000` (RU) / `0000_en` (EN) | 0,0 (480×480) |
+| Day of week | `IMG_LEVEL` | `WEEK` | `0026`–`0032` (RU) / `0226`–`0232` (EN) | 150,24 |
 | Date digits (DD MM YYYY) | 8× `IMG` | sensor-driven | `0011`–`0020` | 82–179, 78 |
 | Weather icon | `IMG_LEVEL` | `WEATHER_CURRENT` | `0079`–`0105` (27) | 330,78 |
 | Temperature value | `TEXT_IMG` | `WEATHER_CURRENT` | `0011`–`0020`, neg `0021` | 338,78 (56×24), align RIGHT |
 | Degree ° | `IMG` | — | `0023` | 394,78 |
-| Vault Boy | `IMG` (animated) | 200 ms timer | `0057`–`0064` | 195,130 |
+| Vault Boy | `IMG_ANIM` | firmware (`anim_fps: 8`) | `pipboy_0`–`pipboy_7` | 186,130 |
 | Time HH / MM / SS | `IMG_TIME` | autonomous | HH·MM `0001`–`0010`; SS `0011`–`0020` | 328,132 / 328,246 / 371,348 |
 | Calories | `TEXT_IMG` | `CAL` | `0069`–`0078` | 17,149 (72×24), align RIGHT |
 | Pulse | `TEXT_IMG` | `HEART` | `0069`–`0078` | 15,216 (58×24), align RIGHT |
@@ -93,6 +96,19 @@ never a black box). The level comes from `@zos/sensor` (the same data the number
 Requires the `data:user.hd.{step,calorie,distance,heart_rate}` permissions in `app.json`.
 (`IMG_LEVEL` was abandoned: `type:STEP` can't be shared by two gauges — left Distance/Steps as
 black boxes — and a type-less `IMG_LEVEL` proved unreliable on-device.)
+
+## Localization (English / Russian)
+
+Labels and weekday names are **baked into the images**, not drawn as text, so the face localizes
+by choosing *which* baked assets to load. At startup `index.js` reads `getLanguage()`
+(`@zos/settings`, a numeric code) once: `const EN = getLanguage() === 2` (en-US). The only two
+language-dependent widgets switch on it — the background `IMG` `src` (`0000_en.png` vs
+`0000.png`) and the day-of-week `IMG_LEVEL` `image_array` (`0226`–`0232` vs `0026`–`0032`); both
+share the **one** coordinate set, since the English background is our background with the labels
+re-lettered in place. Any non-English code (and a failed read) falls back to Russian. Everything
+else is language-neutral. See [ASSETS.md](ASSETS.md#localization) for asset provenance. (The
+`app.json` `i18n`/`defaultLanguage` only localize the *app name* in the phone app — the on-screen
+labels are images, so they can't use string i18n.)
 
 ## Tap-to-launch shortcuts
 
@@ -122,8 +138,11 @@ mrc209 reference faces).
 
 `node preview.js [out]` composites the face to a 480×480 image locally (round-clipped, with mock
 data) so the layout can be checked **before flashing a watch**. Default output `preview.png`; an
-output ending in `.gif` renders an **animated GIF** (the Vault Boy walk — 8 frames @ 200 ms;
-optional 2nd arg = frame count). It's a zero-dependency Node script (built-in `zlib` only — no
+output ending in `.gif` renders an **animated GIF** — by default **bilingual** (the Vault Boy walk
+cycle in English, then Russian, looping, to show the language auto-switch; `PREVIEW_LANG=en|ru`
+forces one language; optional 2nd arg = frames per language). The renderer understands the
+`IMG_ANIM` Vault Boy (it advances the frame per GIF step) and picks EN/RU assets from a mocked
+`getLanguage()`. It's a zero-dependency Node script (built-in `zlib` only — no
 npm install): it **executes** `watchface/index.js` under mocked `@zos` modules to capture the
 real `createWidget(...)` specs (and timer callbacks, for animation frames), and decodes/encodes
 the PNGs — and the GIF (GIF89a + LZW) — itself. An approximation of firmware rendering — good

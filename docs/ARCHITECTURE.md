@@ -106,7 +106,8 @@ auto-opens the battery page (there's no `SYSTEM_APP_BATTERY` and no documented b
 |----------|-----------|-----------|-------|
 | Weather / temperature | 300,70 (135×44) | `launchApp` | `SYSTEM_APP_WEATHER` |
 | Date | 78,72 (120×32) | `launchApp` | `SYSTEM_APP_CALENDAR` |
-| Time (HH/MM) | 300,120 (160×220) | `launchApp` | `SYSTEM_APP_ALARM` |
+| Time — hours | 300,120 (160×113) | `launchApp` | `SYSTEM_APP_ALARM` |
+| Time — minutes | 300,233 (160×107) | `launchApp` | `SYSTEM_APP_COUNTDOWN` (Timer) |
 | Calories | 10,146 (155×32) | `launchApp` | `SYSTEM_APP_STATUS` (Activity) |
 | Pulse | 10,210 (140×34) | `launchApp` | `SYSTEM_APP_HR` |
 | Distance | 5,272 (160×34) | `launchApp` | `SYSTEM_APP_STATUS` |

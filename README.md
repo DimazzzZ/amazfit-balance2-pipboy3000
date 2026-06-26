@@ -28,8 +28,8 @@ background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬ�
 - **Weather** — icon + temperature.
 - **Status icons** — Bluetooth / alarm / lock.
 - **Tap-to-launch shortcuts** — tapping a field opens its app: Calories / Distance / Steps →
-  Activity, Pulse → Heart Rate, Weather → Weather, Date → Calendar, Time → Alarm, **Battery →
-  battery page**.
+  Activity, Pulse → Heart Rate, Weather → Weather, Date → Calendar, **time hours → Alarm, time
+  minutes → Timer**, **Battery → battery page**.
 
 ## Project layout
 

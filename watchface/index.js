@@ -4,7 +4,7 @@ import { createTimer, stopTimer } from '@zos/timer'
 import { getScreenType, SCREEN_TYPE_AOD } from '@zos/display'
 import {
   launchApp, SYSTEM_APP_STATUS, SYSTEM_APP_HR, SYSTEM_APP_WEATHER,
-  SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM,
+  SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM, SYSTEM_APP_COUNTDOWN,
 } from '@zos/router'
 
 // ---- Asset groups (in assets/balance2/, referenced by bare name) ----
@@ -148,7 +148,8 @@ WatchFace({
       })
     tapZone(300, 70, 135, 44, SYSTEM_APP_WEATHER)    // weather icon + temperature
     tapZone(78, 72, 120, 32, SYSTEM_APP_CALENDAR)    // date DD.MM.YYYY
-    tapZone(300, 120, 160, 220, SYSTEM_APP_ALARM)    // time HH/MM
+    tapZone(300, 120, 160, 113, SYSTEM_APP_ALARM)     // time: hours (top) -> Alarm
+    tapZone(300, 233, 160, 107, SYSTEM_APP_COUNTDOWN) // time: minutes (bottom) -> Timer
     tapZone(10, 146, 155, 32, SYSTEM_APP_STATUS)     // calories -> Activity
     tapZone(10, 210, 140, 34, SYSTEM_APP_HR)         // pulse -> Heart Rate
     tapZone(5, 272, 160, 34, SYSTEM_APP_STATUS)      // distance -> Activity

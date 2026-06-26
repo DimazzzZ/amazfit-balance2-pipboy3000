@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  # Manual release: Actions → Release → Run workflow (leave "version" blank to use app.json).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. 1.0.4 (blank = use app.json version)'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark as a pre-release'
+        required: false
+        type: boolean
+        default: false
+  # Or push a tag like v1.0.4.
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release + upload assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history for auto-generated release notes
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install Zeus CLI
+        run: npm install -g @zeppos/zeus-cli@^1.9.1
+
+      - name: Resolve version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }} # untrusted → keep out of the script body
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            V="$INPUT_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(jq -r '.app.version.name' app.json)"
+          fi
+          # Only allow a sane version string (defense-in-depth against odd inputs).
+          case "$V" in
+            ''|*[!0-9A-Za-z.+-]*) echo "Invalid version: '$V'"; exit 1 ;;
+          esac
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Release version: $V"
+
+      - name: Build with Zeus
+        run: zeus build
+
+      - name: Package release assets
+        id: pkg
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          base="PipBoy3000-v${V}"
+          mkdir -p release
+
+          zab="$(ls dist/*.zab | head -n1)"
+          [ -n "$zab" ] || { echo "No .zab produced by zeus build"; exit 1; }
+          cp "$zab" "release/${base}.zab"
+
+          # The .zab is a zip wrapping <md5>.zpk — extract the device package.
+          tmp="$(mktemp -d)"
+          unzip -o "$zab" -d "$tmp" >/dev/null
+          zpk="$(ls "$tmp"/*.zpk | head -n1)"
+          [ -n "$zpk" ] || { echo "No .zpk inside the .zab"; exit 1; }
+          cp "$zpk" "release/${base}.zpk"
+
+          # A .zip copy for tools/users that only accept .zip (same bytes as the .zab).
+          cp "$zab" "release/${base}.zip"
+
+          # Bonus visual for the release page.
+          [ -f preview.gif ] && cp preview.gif "release/${base}.gif" || true
+
+          ( cd release && sha256sum PipBoy3000-* > SHA256SUMS.txt )
+          echo "Release assets:"; ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: PipBoy3000 v${{ steps.ver.outputs.version }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release/*
+          body: |
+            **Pip-Boy 3000 — Amazfit Balance 2 watch face** · v${{ steps.ver.outputs.version }}
+
+            ### Downloads
+            | File | What it is |
+            |------|------------|
+            | `PipBoy3000-v${{ steps.ver.outputs.version }}.zab` | Zeus bundle — the usual install file |
+            | `PipBoy3000-v${{ steps.ver.outputs.version }}.zpk` | ZeppOS device package (extracted from the .zab) |
+            | `PipBoy3000-v${{ steps.ver.outputs.version }}.zip` | Same bytes as the `.zab`, for tools that only accept `.zip` |
+            | `SHA256SUMS.txt` | Checksums (`sha256sum -c SHA256SUMS.txt`) |
+
+            ### Install
+            Fastest: enable **Developer Mode** in the Zepp app (Profile → Settings → Information →
+            tap the logo), run `zeus preview` and scan the QR. To install a downloaded file, sideload
+            the `.zab`/`.zpk` via the Zepp app Developer Mode. See the
+            [README](https://github.com/${{ github.repository }}#readme) for details.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

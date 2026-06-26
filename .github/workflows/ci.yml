@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install Zeus CLI
+        run: npm install -g @zeppos/zeus-cli@^1.9.1
+
+      - name: Syntax check
+        run: node --check watchface/index.js && node --check preview.js
+
+      - name: Build with Zeus (compile + pack smoke test)
+        run: zeus build
+
+      - name: Render the local preview (renderer smoke test)
+        run: node preview.js preview.ci.png
+
+      - name: Upload built package
+        uses: actions/upload-artifact@v5
+        with:
+          name: pipboy3000-zab
+          path: dist/*.zab
+          retention-days: 14
+          if-no-files-found: error

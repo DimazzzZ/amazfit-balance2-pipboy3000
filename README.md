@@ -5,7 +5,14 @@ display), built as a native ZeppOS app. Bright phosphor-green UI on a dark CRT-s
 background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬС, РАССТОЯНИЕ, ШАГИ, БАТАРЕЯ,
 ТЕМПЕРАТУРА) and an animated Vault Boy.
 
-![Pip-Boy 3000 — Amazfit Balance 2 watch face](preview.gif)
+> **Language: Russian only (for now).** All on-screen labels and the weekday names are baked
+> into the image assets (`0000.png` background + the weekday sprites) in Russian — there is no
+> locale/i18n switch yet. Other languages would require redrawn assets (see
+> [docs/ASSETS.md](docs/ASSETS.md)).
+
+<p align="center">
+  <img src="preview.gif" alt="Pip-Boy 3000 — Amazfit Balance 2 watch face" width="240">
+</p>
 
 ## Features
 
@@ -14,14 +21,15 @@ background, with Russian labels (ВРЕМЯ, ВТОРНИК, ККАЛ, ПУЛЬ�
   background's separator dots.
 - **Day of week** — top banner (ВТОРНИК, etc.).
 - **Animated Vault Boy** — 8-frame walk cycle (≈200 ms/frame).
-- **Activity gauges** — Calories / Pulse / Steps fill by value (`IMG_LEVEL` bound to the
-  `CAL` / `HEART` / `STEP` data types).
+- **Activity gauges** — Calories / Pulse / Distance / Steps are sensor-driven: each bar always
+  shows its green frame and fills by value toward its goal (accurate even at near-zero morning
+  data — see [docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md) #2).
 - **Battery** — `NN%` with the `%` glyph kept inside its box.
 - **Weather** — icon + temperature.
 - **Status icons** — Bluetooth / alarm / lock.
 - **Tap-to-launch shortcuts** — tapping a field opens its app: Calories / Distance / Steps →
-  Activity, Pulse → Heart Rate, Weather → Weather, Date → Calendar, Time → Alarm, Battery →
-  Settings.
+  Activity, Pulse → Heart Rate, Weather → Weather, Date → Calendar, Time → Alarm, **Battery →
+  battery page**.
 
 ## Project layout
 
@@ -87,10 +95,25 @@ output renders multiple frames (advancing the animation timers) and encodes an a
 (hand-rolled GIF89a + LZW, still zero-dep). It's an approximation (mock data, no live sensors);
 for a true device/simulator preview use `zeus preview`.
 
-## Install
+## Quick check on your watch (fastest)
 
-Sideload the built `.zab` (or the inner `.zpk`) onto the Balance 2 — via the Zepp app
-(Profile → your watch → Watch faces → add a custom face / Zepp Dev scan) or the developer bridge.
+The quickest loop — no manual sideloading — is **Developer Mode + a `zeus preview` QR**:
+
+1. **Enable Developer Mode** in the Zepp app: **Profile → Settings → Information**, then **tap the
+   logo** there a few times until Developer Mode unlocks.
+2. In the project root run **`zeus preview`** — a **QR code** is printed in the terminal.
+3. In the Zepp app's **Developer Mode**, tap the **Scan** icon and scan that QR — the watch face
+   compiles and loads straight onto your connected Balance 2.
+
+(`zeus preview` builds for the real device; you must be signed into the same Zepp account as the
+watch.)
+
+## Install (permanent)
+
+To keep the face on the watch, sideload the built `.zab` (or the inner `.zpk`) — via the Zepp app
+(Profile → your watch → Watch faces → add a custom face) or the developer bridge. Bump
+`app.json` `version` on each rebuild, or the watch may keep the old copy (see
+[docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md) #2).
 
 ## Documentation
 
@@ -98,18 +121,21 @@ Sideload the built `.zab` (or the inner `.zpk`) onto the Balance 2 — via the Z
   onDestroy })` lifecycle, `data_type` auto-binding vs the two timers (date + Vault Boy), and a
   full widget inventory (type, binding, asset, coordinates).
 - **[docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md)** — reusable Balance 2 / ZeppOS lessons
-  (symptom → cause → fix): `TEXT_IMG` alignment needs `w`, `IMG_LEVEL` `type`-binding limits,
-  the TGA cover requirement, the unique-`appId` rule, building with `zeus`, and why an
-  editor-exported face rebuilt by Zeus black-screens (and the `@zos`-source fix).
+  (symptom → cause → fix): `TEXT_IMG` alignment needs `w`; `IMG_LEVEL` `type`-binding limits and
+  why gauges are driven as plain `IMG` + `setProperty(SRC)` instead; the TGA cover requirement;
+  the unique-`appId` rule; the version-bump-to-reinstall gotcha; building with `zeus`; tap
+  shortcuts via `launchApp` / `IMG_CLICK`; and why an editor-exported face rebuilt by Zeus
+  black-screens (the `@zos`-source fix).
 - **[docs/ASSETS.md](docs/ASSETS.md)** — the numbered-PNG asset index map.
 
 ## Known on-watch behaviors
 
-- **Distance gauge stays empty.** ZeppOS `DISTANCE` has no `_TARGET` and a `[0,99] km` range,
-  so it can't be `type`-bound like a goal metric. It's bound to `type:STEP` so it renders
-  without error, but two `IMG_LEVEL` widgets can't share one data type — only the Steps gauge
-  actually fills. (A dynamic version would compute the level from the distance sensor inside a
-  `createTimer` callback and `setProperty(prop.MORE, { level })`.)
+- **Gauges are sensor-driven.** Each bar (Calories/Pulse/Distance/Steps) is a plain `IMG` whose
+  fill sprite is chosen in `updateGauges()` from `@zos/sensor` (the same data the numbers show):
+  Cal/Steps `current/getTarget()`, Distance `current / ~10 km`, Pulse over `[40,180]`. The green
+  frame is always drawn (level 0 = empty frame — never a black box). The full-scale goals
+  (`DIST_FULL_M`, `HR_MIN`/`HR_MAX`, `CAL_GOAL`/`STEP_GOAL` fallbacks) are tunable in
+  `watchface/index.js`. Needs the `data:user.hd.{step,calorie,distance,heart_rate}` permissions.
 - **Temperature & distance units** (°C/°F, km/mi, decimal point) follow the watch's
   locale/unit settings.
 - The **date** is drawn per-digit and refreshed from the `Time` sensor (kept per-digit so the

@@ -66,41 +66,46 @@ Coordinates are in the 480-px design space, straight from `watchface/index.js`.
 | Pulse | `TEXT_IMG` | `HEART` | `0069`–`0078` | 15,216 (58×24), align RIGHT |
 | Distance | `TEXT_IMG` | `DISTANCE` | `0069`–`0078`, dot `0034` | 8,277 (80×24), align RIGHT |
 | Steps | `TEXT_IMG` | `STEP` | `0069`–`0078` | 195,369 (96×24), align CENTER_H |
-| Calories gauge | `IMG_LEVEL` | manual (Calorie sensor) | `0200`–`0205` | 90,159 (69×15) |
-| Pulse gauge | `IMG_LEVEL` | manual (HeartRate sensor) | `0206`–`0211` | 73,224 (72×13) |
-| Distance gauge | `IMG_LEVEL` | manual (Distance sensor) | `0212`–`0217` | 90,286 (69×15) |
-| Steps gauge | `IMG_LEVEL` | manual (Step sensor) | `0218`–`0223` | 194,349 (91×15) |
+| Calories gauge | `IMG` (src-swapped) | Calorie sensor | `0200`–`0205` | 90,159 |
+| Pulse gauge | `IMG` (src-swapped) | HeartRate sensor | `0206`–`0211` | 73,224 |
+| Distance gauge | `IMG` (src-swapped) | Distance sensor | `0212`–`0217` | 90,286 |
+| Steps gauge | `IMG` (src-swapped) | Step sensor | `0218`–`0223` | 194,349 |
 | Battery value | `TEXT_IMG` | `BATTERY` | `0069`–`0078` | 74,379 (58×24), align RIGHT |
 | Battery % | `IMG` | — | `0035` | 132,379 |
 | Disconnect / Lock / Alarm | 3× `IMG_STATUS` | `DISCONNECT`/`LOCK`/`CLOCK` | `0054`/`0052`/`0055` | 312/351/405, ~367 |
 
-The four metric gauges set their level **manually** in `updateGauges()` from `@zos/sensor`
-(`Step`/`Calorie`/`Distance`/`HeartRate` — the same data the numbers show) via
-`setProperty(hmUI.prop.MORE, { level })`, refreshed on each sensor's `onChange` and the 60 s timer.
-`type`-binding was dropped because the firmware's `type:CAL` level didn't track the active-kcal
-number (it over-filled at low data) and `DISTANCE` has no goal to bind. Levels: Cal `current/target`,
-Steps `current/target`, Distance `current/DIST_FULL_M` (~10 km full), Pulse linear over `[40,180]`.
+The four metric gauges are plain **`IMG`** widgets whose `src` is swapped to the right 6-level
+fill sprite in `updateGauges()` — the same proven `IMG` + `setProperty(hmUI.prop.SRC, …)` path the
+Vault Boy uses, so the bar **always renders** (every sprite incl. level 0 has the green border —
+never a black box). The level comes from `@zos/sensor` (the same data the numbers show): Cal & Steps
+`current/getTarget()`, Distance `current/DIST_FULL_M` (~10 km full), Pulse linear over `[40,180]`;
+`level = clamp(round(frac*5), 0, 5)`. Refreshed on each sensor's `onChange` + the 60 s timer.
 Requires the `data:user.hd.{step,calorie,distance,heart_rate}` permissions in `app.json`.
+(`IMG_LEVEL` was abandoned: `type:STEP` can't be shared by two gauges — left Distance/Steps as
+black boxes — and a type-less `IMG_LEVEL` proved unreliable on-device.)
 
 ## Tap-to-launch shortcuts
 
-Created **last in `build()`** (so they sit on top and capture touches) as invisible `BUTTON`
-widgets — hit area is `w×h`, drawn with `transparent.png`. Each `click_func` calls
-`@zos/router` `launchApp({ appId: SYSTEM_APP_*, native: true })` (wrapped in try/catch).
+Created **last in `build()`** (so they sit on top and capture touches), invisible. Most are
+`BUTTON` widgets (hit area `w×h`, `transparent.png`) whose `click_func` calls `@zos/router`
+`launchApp({ appId: SYSTEM_APP_*, native: true })` (try/catch). **Battery** is the exception: it
+uses an `IMG_CLICK` with `type: hmUI.data_type.BATTERY` — a firmware "jumpable shortcut" that
+auto-opens the battery page (there's no `SYSTEM_APP_BATTERY` and no documented battery page URL).
 
-| Tap zone | x, y (w×h) | Opens |
-|----------|-----------|-------|
-| Weather / temperature | 300,70 (135×44) | `SYSTEM_APP_WEATHER` |
-| Date | 78,72 (120×32) | `SYSTEM_APP_CALENDAR` |
-| Time (HH/MM) | 300,120 (160×220) | `SYSTEM_APP_ALARM` |
-| Calories | 10,146 (155×32) | `SYSTEM_APP_STATUS` (Activity) |
-| Pulse | 10,210 (140×34) | `SYSTEM_APP_HR` |
-| Distance | 5,272 (160×34) | `SYSTEM_APP_STATUS` |
-| Steps | 185,345 (110×52) | `SYSTEM_APP_STATUS` |
-| Battery | 40,372 (120×34) | `SYSTEM_APP_SETTING` |
+| Tap zone | x, y (w×h) | Mechanism | Opens |
+|----------|-----------|-----------|-------|
+| Weather / temperature | 300,70 (135×44) | `launchApp` | `SYSTEM_APP_WEATHER` |
+| Date | 78,72 (120×32) | `launchApp` | `SYSTEM_APP_CALENDAR` |
+| Time (HH/MM) | 300,120 (160×220) | `launchApp` | `SYSTEM_APP_ALARM` |
+| Calories | 10,146 (155×32) | `launchApp` | `SYSTEM_APP_STATUS` (Activity) |
+| Pulse | 10,210 (140×34) | `launchApp` | `SYSTEM_APP_HR` |
+| Distance | 5,272 (160×34) | `launchApp` | `SYSTEM_APP_STATUS` |
+| Steps | 185,345 (110×52) | `launchApp` | `SYSTEM_APP_STATUS` |
+| Battery | 40,372 (120×34) | `IMG_CLICK` `type:BATTERY` | battery page |
 
-(`IMG_CLICK` + `type: data_type.*` is the alternative auto-jump widget; this face uses explicit
-`BUTTON` + `launchApp` so each target is chosen by name.)
+`launchApp` targets a system app by name (`SYSTEM_APP_*`); for screens that have no such constant
+(battery), an `IMG_CLICK` bound to a `data_type` is the firmware-routed way in (per the mrc206/
+mrc209 reference faces).
 
 ## Preview
 

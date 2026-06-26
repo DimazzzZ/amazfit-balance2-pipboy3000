@@ -1,9 +1,9 @@
 import * as hmUI from '@zos/ui'
-import { Time } from '@zos/sensor'
+import { Time, Step, Calorie, Distance, HeartRate } from '@zos/sensor'
 import { createTimer, stopTimer } from '@zos/timer'
 import {
   launchApp, SYSTEM_APP_STATUS, SYSTEM_APP_HR, SYSTEM_APP_WEATHER,
-  SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM, SYSTEM_APP_SETTING,
+  SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM,
 } from '@zos/router'
 
 // Fonts / sprite groups (assets are in assets/balance2/, referenced by bare name).
@@ -19,6 +19,11 @@ const METRIC_FONT = [
   '0069.png', '0070.png', '0071.png', '0072.png', '0073.png',
   '0074.png', '0075.png', '0076.png', '0077.png', '0078.png',
 ]
+// Gauge fill sprites, level 0 (empty, frame only) → 5 (full). Driven as plain IMG src swaps.
+const CAL_BARS = ['0200.png', '0201.png', '0202.png', '0203.png', '0204.png', '0205.png']
+const PULSE_BARS = ['0206.png', '0207.png', '0208.png', '0209.png', '0210.png', '0211.png']
+const DIST_BARS = ['0212.png', '0213.png', '0214.png', '0215.png', '0216.png', '0217.png']
+const STEP_BARS = ['0218.png', '0219.png', '0220.png', '0221.png', '0222.png', '0223.png']
 const WEEK_IMG = ['0026.png', '0027.png', '0028.png', '0029.png', '0030.png', '0031.png', '0032.png']
 const WEATHER_IMG = Array.from({ length: 27 }, (_, i) => `${(79 + i).toString().padStart(4, '0')}.png`)
 const VAULT_FRAMES = ['0057.png', '0058.png', '0059.png', '0060.png', '0061.png', '0062.png', '0063.png', '0064.png']
@@ -26,7 +31,20 @@ const VAULT_FRAMES = ['0057.png', '0058.png', '0059.png', '0060.png', '0061.png'
 // Date digits sit at these absolute x positions (snug to the baked separator dots), y=78.
 const DATE_X = [82, 94, 111, 123, 143, 155, 167, 179]
 
+// Gauge full-scale references (when a sensor goal isn't available).
+const CAL_GOAL = 300       // fallback active-kcal goal
+const STEP_GOAL = 8000     // fallback step goal
+const DIST_FULL_M = 10000  // distance bar full at ~10 km
+const HR_MIN = 40          // pulse bar maps linearly over [HR_MIN, HR_MAX]
+const HR_MAX = 180
+
 const timeSensor = new Time()
+const stepSensor = new Step()
+const calSensor = new Calorie()
+const distSensor = new Distance()
+const hrSensor = new HeartRate()
+
+const gaugeLevel = (frac) => Math.max(0, Math.min(5, Math.round((frac || 0) * 5)))
 
 WatchFace({
   build() {
@@ -54,7 +72,7 @@ WatchFace({
     hmUI.createWidget(hmUI.widget.IMG, { x: 394, y: 78, src: '0023.png' }) // degree °
 
     // ---- Vault Boy (animated) ----
-    this._vault = hmUI.createWidget(hmUI.widget.IMG, { x: 183, y: 130, src: VAULT_FRAMES[0] })
+    this._vault = hmUI.createWidget(hmUI.widget.IMG, { x: 195, y: 130, src: VAULT_FRAMES[0] })
 
     // ---- Time: hours/minutes (big) + seconds (small), auto-bound ----
     hmUI.createWidget(hmUI.widget.IMG_TIME, {
@@ -81,27 +99,14 @@ WatchFace({
       align_h: hmUI.align.CENTER_H, type: hmUI.data_type.STEP,
     })
 
-    // ---- Gauge bars (auto-bound, fill 0->5 by metric) ----
-    hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-      x: 90, y: 159, w: 69, h: 15,
-      image_array: ['0200.png', '0201.png', '0202.png', '0203.png', '0204.png', '0205.png'],
-      image_length: 6, type: hmUI.data_type.CAL,
-    })
-    hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-      x: 73, y: 224, w: 72, h: 13,
-      image_array: ['0206.png', '0207.png', '0208.png', '0209.png', '0210.png', '0211.png'],
-      image_length: 6, type: hmUI.data_type.HEART,
-    })
-    hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-      x: 90, y: 286, w: 69, h: 15,
-      image_array: ['0212.png', '0213.png', '0214.png', '0215.png', '0216.png', '0217.png'],
-      image_length: 6, type: hmUI.data_type.STEP,
-    })
-    hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-      x: 194, y: 349, w: 91, h: 15,
-      image_array: ['0218.png', '0219.png', '0220.png', '0221.png', '0222.png', '0223.png'],
-      image_length: 6, type: hmUI.data_type.STEP,
-    })
+    // ---- Gauge bars: plain IMG whose src is swapped to the right fill sprite in updateGauges().
+    //      Uses the proven IMG + setProperty(SRC) path (same as the Vault Boy), so it always
+    //      renders the green-bordered bar (level 0 = empty frame) — never a black box. The
+    //      level tracks the sensor value. (IMG_LEVEL type-binding mis-mapped / didn't render.)
+    this._gCal = hmUI.createWidget(hmUI.widget.IMG, { x: 90, y: 159, src: CAL_BARS[0] })
+    this._gPulse = hmUI.createWidget(hmUI.widget.IMG, { x: 73, y: 224, src: PULSE_BARS[0] })
+    this._gDist = hmUI.createWidget(hmUI.widget.IMG, { x: 90, y: 286, src: DIST_BARS[0] })
+    this._gStep = hmUI.createWidget(hmUI.widget.IMG, { x: 194, y: 349, src: STEP_BARS[0] })
 
     // ---- Battery (auto-bound) + % glyph ----
     hmUI.createWidget(hmUI.widget.TEXT_IMG, {
@@ -133,17 +138,47 @@ WatchFace({
     tapZone(10, 210, 140, 34, SYSTEM_APP_HR)         // pulse -> Heart Rate
     tapZone(5, 272, 160, 34, SYSTEM_APP_STATUS)      // distance -> Activity
     tapZone(185, 345, 110, 52, SYSTEM_APP_STATUS)    // steps -> Activity
-    tapZone(40, 372, 120, 34, SYSTEM_APP_SETTING)    // battery -> Settings
+    // battery -> battery page: a firmware "jumpable shortcut" (IMG_CLICK + data_type.BATTERY)
+    // auto-opens the battery screen; there's no SYSTEM_APP_BATTERY to launchApp.
+    hmUI.createWidget(hmUI.widget.IMG_CLICK, { x: 40, y: 372, w: 120, h: 34, type: hmUI.data_type.BATTERY })
 
     // ---- Dynamic bits: date refresh + Vault Boy walk cycle ----
     this.updateDate()
-    this._dateTimer = createTimer(0, 60000, () => this.updateDate())
+    this._dateTimer = createTimer(0, 60000, () => { this.updateDate(); this.updateGauges() })
 
     this._vaultIndex = 0
     this._vaultTimer = createTimer(0, 200, () => {
       this._vaultIndex = (this._vaultIndex + 1) % VAULT_FRAMES.length
       this._vault.setProperty(hmUI.prop.SRC, VAULT_FRAMES[this._vaultIndex])
     })
+
+    // ---- Gauges: set levels from the sensors, refresh on change + with the date timer ----
+    this.updateGauges()
+    this._onGauge = () => this.updateGauges()
+    try { stepSensor.onChange(this._onGauge) } catch (e) {}
+    try { calSensor.onChange(this._onGauge) } catch (e) {}
+    try { distSensor.onChange(this._onGauge) } catch (e) {}
+  },
+
+  updateGauges() {
+    const setBar = (gauge, bars, frac) => {
+      try { gauge.setProperty(hmUI.prop.SRC, bars[gaugeLevel(frac)]) } catch (e) {}
+    }
+    try {
+      const calT = calSensor.getTarget() || CAL_GOAL
+      setBar(this._gCal, CAL_BARS, calSensor.getCurrent() / calT)
+    } catch (e) {}
+    try {
+      const hr = hrSensor.getCurrent() || hrSensor.getLast() || 0
+      setBar(this._gPulse, PULSE_BARS, (hr - HR_MIN) / (HR_MAX - HR_MIN))
+    } catch (e) {}
+    try {
+      setBar(this._gDist, DIST_BARS, distSensor.getCurrent() / DIST_FULL_M)
+    } catch (e) {}
+    try {
+      const stepT = stepSensor.getTarget() || STEP_GOAL
+      setBar(this._gStep, STEP_BARS, stepSensor.getCurrent() / stepT)
+    } catch (e) {}
   },
 
   updateDate() {
@@ -159,5 +194,10 @@ WatchFace({
   onDestroy() {
     if (this._dateTimer) stopTimer(this._dateTimer)
     if (this._vaultTimer) stopTimer(this._vaultTimer)
+    if (this._onGauge) {
+      try { stepSensor.offChange(this._onGauge) } catch (e) {}
+      try { calSensor.offChange(this._onGauge) } catch (e) {}
+      try { distSensor.offChange(this._onGauge) } catch (e) {}
+    }
   },
 })

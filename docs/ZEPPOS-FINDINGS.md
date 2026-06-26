@@ -51,14 +51,24 @@ pick the level from the metric automatically.
   the firmware maps the gauge level off a different calorie basis/goal than the active-kcal value
   it puts in the number. So even where `type` "works", the bar may not track what the user reads.
 
-**Resolution in this project (current):** all four metric gauges drop `type` and set their level
-**manually** from `@zos/sensor` — `Step`/`Calorie` (`getCurrent`/`getTarget`), `Distance`
-(`getCurrent`/full-scale), `HeartRate` (`getCurrent`/`getLast` over a range) — via
-`gauge.setProperty(hmUI.prop.MORE, { level })`, computed in an `updateGauges()` run on each
-sensor's `onChange` + a timer. This makes the bar track the same value as the number, accurate at
-low data, and finally lets the Distance gauge reflect distance. Needs the
-`data:user.hd.{step,calorie,distance,heart_rate}` permissions. (In modern `@zos`, registering
-`sensor.onChange` in `build()` is safe — unlike the legacy `init_view` crash in finding #3.)
+- **A type-less `IMG_LEVEL` (manual `level`) is unreliable on-device.** Dropping `type` and
+  setting `setProperty(prop.MORE, { level })` rendered in the local preview but did **not** show on
+  the watch (the box stayed dark). `IMG_LEVEL` with a *valid* `type` does render (the WEEK/WEATHER
+  ones work) — but that brings the binding problems above.
+
+**Resolution in this project (current):** the four metric gauges are **plain `IMG` widgets whose
+`src` is swapped** to the right 6-level fill sprite (`gauge.setProperty(hmUI.prop.SRC, BARS[level])`)
+— the exact `IMG`+`SRC` mechanism the Vault Boy and date digits use, which is **proven to render on
+this device**. The level is computed in `updateGauges()` from `@zos/sensor` (Cal/Steps
+`current/getTarget()`, Distance `current/full-scale`, Pulse over `[40,180]`), run on each sensor's
+`onChange` + the 60 s timer. Because every sprite (incl. level 0) contains the green frame, the
+border is **always** visible — never a black box — and the fill tracks the same value as the number.
+Needs the `data:user.hd.{step,calorie,distance,heart_rate}` permissions. (Registering
+`sensor.onChange` in `build()` is safe in modern `@zos`, unlike the legacy `init_view` crash in #3.)
+
+**Install gotcha:** the watch can ignore a re-install that keeps the same `appId` **and** the same
+`version` — it dedupes and keeps the old build. Bump `app.json` `version.code` (and `name`) on
+every change you want to flash, or remove the old face first.
 
 ---
 
@@ -222,9 +232,22 @@ true })`** (system-app launch needs API ≥ 3.0). Create the buttons **last in `
 sit on top and receive touches. `SYSTEM_APP_*` constants name the targets (`SYSTEM_APP_STATUS` =
 Activity, `SYSTEM_APP_HR`, `SYSTEM_APP_WEATHER`, `SYSTEM_APP_CALENDAR`, `SYSTEM_APP_ALARM`,
 `SYSTEM_APP_SETTING`, …). Wrap the call in try/catch — a `SYSTEM_APP_*` not present on a given
-firmware just no-ops. (The watchface-native alternative is `IMG_CLICK` with `type:
-hmUI.data_type.*`, which auto-jumps to the app for that metric — but the destination is fixed by
-the data type, whereas `BUTTON` + `launchApp` lets you choose any app.)
+firmware just no-ops.
+
+**For screens with no `SYSTEM_APP_*` constant, use an `IMG_CLICK` data_type shortcut.** Some
+destinations can't be named via `launchApp` — notably the **battery page** (there's no
+`SYSTEM_APP_BATTERY`, and `SYSTEM_APP_SETTING` only opens Settings *home*). The watchface-native
+way in is a clickable region bound to a data type, which the firmware auto-routes:
+
+```js
+hmUI.createWidget(hmUI.widget.IMG_CLICK, { x, y, w, h, type: hmUI.data_type.BATTERY })
+```
+
+This face uses that for **battery → battery page**, and `BUTTON` + `launchApp` for the rest
+(Activity/HR/Weather/Calendar/Alarm) so each of those targets is chosen by name. The reference
+faces (mrc206/mrc209) confirm the `IMG_CLICK type:BATTERY` jump; they also reveal native screen
+names usable with the legacy `hmApp.startApp({ url, native: true })` (e.g. `Settings_homeScreen`,
+`ScheduleCalScreen`, `WeatherScreen`).
 
 ---
 

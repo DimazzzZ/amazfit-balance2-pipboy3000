@@ -67,8 +67,13 @@ Build with the [Zeus CLI](https://docs.zepp.com/docs/guides/tools/cli/) (v1.9.x)
 
 ```bash
 zeus build        # → dist/<appId>-PipBoy3000-<version>-<timestamp>.zab
-zeus preview      # live preview (needs the simulator / a paired device)
+zeus preview      # live preview on a paired device (see "Quick check" below)
 ```
+
+The project also ships npm script aliases (`package.json`): `npm run build` / `npm run dev` /
+`npm run preview` / `npm run lint` / `npm run format`. `npm install` is **only** needed for editor
+type hints (`@zeppos/device-types`) and lint/format — Zeus resolves `@zos/*` itself, so a plain
+`zeus build` needs no install.
 
 `zeus build` runs the full native toolchain: it bundles the `@zos` source (ROLLUP), **compiles
 it to QuickJS bytecode** (`index.bin`), and **converts every PNG asset to the native ZeppOS TGA
@@ -117,9 +122,9 @@ To keep the face on the watch, sideload the built `.zab` (or the inner `.zpk`) �
 
 ## Documentation
 
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — file roles, the `WatchFace({ build,
-  onDestroy })` lifecycle, `data_type` auto-binding vs the two timers (date + Vault Boy), and a
-  full widget inventory (type, binding, asset, coordinates).
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — file roles, the `build → onResume/onPause`
+  lifecycle (timers pause off-screen; walk skipped in AOD), `data_type` auto-binding vs the
+  imperative date/gauge/animation drivers, and a full widget inventory.
 - **[docs/ZEPPOS-FINDINGS.md](docs/ZEPPOS-FINDINGS.md)** — reusable Balance 2 / ZeppOS lessons
   (symptom → cause → fix): `TEXT_IMG` alignment needs `w`; `IMG_LEVEL` `type`-binding limits and
   why gauges are driven as plain `IMG` + `setProperty(SRC)` instead; the TGA cover requirement;
@@ -136,6 +141,9 @@ To keep the face on the watch, sideload the built `.zab` (or the inner `.zpk`) �
   frame is always drawn (level 0 = empty frame — never a black box). The full-scale goals
   (`DIST_FULL_M`, `HR_MIN`/`HR_MAX`, `CAL_GOAL`/`STEP_GOAL` fallbacks) are tunable in
   `watchface/index.js`. Needs the `data:user.hd.{step,calorie,distance,heart_rate}` permissions.
+- **Power-aware.** The Vault Boy walk and the periodic refresh run only while the face is shown
+  (a `WIDGET_DELEGATE` stops the timers on hide), and the animation is skipped in always-on
+  display (AOD) — so it doesn't burn battery off-screen.
 - **Temperature & distance units** (°C/°F, km/mi, decimal point) follow the watch's
   locale/unit settings.
 - The **date** is drawn per-digit and refreshed from the `Time` sensor (kept per-digit so the

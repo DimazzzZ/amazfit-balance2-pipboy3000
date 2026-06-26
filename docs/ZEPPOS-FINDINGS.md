@@ -251,6 +251,28 @@ names usable with the legacy `hmApp.startApp({ url, native: true })` (e.g. `Sett
 
 ---
 
+## 13. Pause animations off-screen + skip them in AOD (battery / burn-in)
+
+A free-running animation timer (here the 200 ms Vault Boy walk) keeps firing even when the
+watchface is hidden or the screen is in always-on display — wasting battery and risking OLED
+burn-in. Best practice:
+
+- Register a **`WIDGET_DELEGATE`** with `resume_call`/`pause_call`; create the repeating timers in
+  `resume_call` and `stopTimer()` them in `pause_call` (and `onDestroy`), so they only run while
+  the face is actually shown.
+- Also call your resume logic **once at the end of `build()`** so the first paint/animation doesn't
+  wait on the first resume event — guard it (`if (this._running) return`) so it's idempotent if
+  `resume_call` then fires.
+- **Skip the animation in AOD:** `import { getScreenType, SCREEN_TYPE_AOD } from '@zos/display'`
+  and don't advance frames when `getScreenType() === SCREEN_TYPE_AOD`.
+
+Keep the static one-shot paint (date/gauges) in `build()` so the face is correct immediately even
+before the first resume. (For maximum robustness wrap sensor/router/timer calls in a tiny
+`safe(fn)` try/catch helper — a not-ready sensor then degrades to an empty gauge instead of a
+broken build.)
+
+---
+
 ## Meta-lesson
 
 The Balance 2 firmware diverges from both the simulator and a naïve static renderer in several

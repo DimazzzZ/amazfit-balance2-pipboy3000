@@ -1,0 +1,15 @@
+{
+  "root": true,
+  "env": { "es2021": true, "node": true },
+  "parserOptions": { "ecmaVersion": 2021, "sourceType": "module" },
+  "extends": ["eslint:recommended"],
+  "globals": {
+    "WatchFace": "readonly",
+    "App": "readonly"
+  },
+  "rules": {
+    "no-empty": ["warn", { "allowEmptyCatch": true }],
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
+  },
+  "ignorePatterns": ["dist/", "node_modules/"]
+}

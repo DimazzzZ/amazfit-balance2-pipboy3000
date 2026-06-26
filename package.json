@@ -1,0 +1,19 @@
+{
+  "name": "amazfit-balance2-pipboy3000",
+  "version": "1.0.3",
+  "private": true,
+  "description": "Fallout Pip-Boy 3000 watch face for the Amazfit Balance 2 (ZeppOS).",
+  "scripts": {
+    "build": "zeus build",
+    "dev": "zeus preview",
+    "preview": "node preview.js",
+    "preview:gif": "node preview.js preview.gif",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{js,json,md}\""
+  },
+  "devDependencies": {
+    "@zeppos/device-types": "^3.0.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3"
+  }
+}

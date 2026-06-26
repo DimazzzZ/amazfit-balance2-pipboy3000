@@ -269,6 +269,7 @@ function collectWidgets(folder) {
     '@zos/ui': hmUI,
     '@zos/sensor': { Time, Step, Calorie, Distance, HeartRate },
     '@zos/timer': { createTimer: (_d, _p, cb) => { timers.push(cb); return timers.length }, stopTimer: () => {} },
+    '@zos/display': { getScreenType: () => 0, SCREEN_TYPE_AOD: 2 }, // 0 = normal -> walk animates in preview
   }
   const __require = (mod) => MODS[mod] || new Proxy({}, { get: () => anyMock })
   const WatchFace = (obj) => { if (obj && typeof obj.build === 'function') obj.build() }

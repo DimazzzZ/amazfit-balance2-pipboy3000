@@ -9,6 +9,9 @@ build/
 .zeus/
 node_modules/
 
+# Tooling caches
+.eslintcache
+
 # OS cruft
 .DS_Store
 

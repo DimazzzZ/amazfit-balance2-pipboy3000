@@ -9,9 +9,11 @@ How the Pip-Boy 3000 watch face is put together and how it runs on the Amazfit B
 |------|------|
 | `app.json` | Zeus manifest. `configVersion: v3`, `appType: "watchface"`, unique `appId`, target API **`4.0.0`**, and a `targets.balance2` block with the three Balance 2 platforms (`Lyon`/`LyonWN`/`LyonW`, deviceSource 9568512/13/15), `designWidth: 480`, and `module.watchface.path = "watchface/index"`. `icon`/`cover` point at `Preview.png`. At build time Zeus flattens `targets.balance2` into the top-level `module`/`platforms` form in the device package. |
 | `app.js` | Modern `App({...})` entry (lifecycle stubs). Not watch-face-specific. |
-| `watchface/index.js` | The whole watch face, as **modern ZeppOS `@zos` source**: a `WatchFace({ build(), onDestroy() })` that creates the widgets. The only file with real logic. |
-| `preview.js` | Local static renderer (Node, zero deps) — composites the face to a PNG (no watch needed). See [Preview](#preview). |
+| `watchface/index.js` | The whole watch face, as **modern ZeppOS `@zos` source**: a `WatchFace({ build(), onResume(), onPause(), updateGauges(), updateDate(), onDestroy() })`. The only file with real logic. |
+| `preview.js` | Local static renderer (Node, zero deps) — composites the face to a PNG/GIF (no watch needed). See [Preview](#preview). |
 | `assets/balance2/` | All images (numbered PNGs + the cover `Preview.png`) and the font, under the per-target subfolder. See [ASSETS.md](ASSETS.md). |
+| `package.json` / `jsconfig.json` | Dev tooling: npm scripts (`build`/`dev`/`preview`/`lint`/`format`) and editor type hints via the `@zeppos/device-types` devDependency. Not needed to build (Zeus resolves `@zos/*` itself); `npm install` only for IntelliSense/lint. |
+| `.eslintrc.json` / `.prettierrc.json` / `.editorconfig` | Lint/format/editor consistency. |
 
 **Build:** `zeus build` bundles the `@zos` source (ROLLUP), compiles it to QuickJS bytecode
 (`index.bin`), converts the PNGs to native ZeppOS TGA, and packs a `.zab`/`.zpk` into `dist/`.
@@ -24,29 +26,37 @@ re-authoring as `@zos` source — see finding #11 in [ZEPPOS-FINDINGS.md](ZEPPOS
 `watchface/index.js` is a modern `@zos` module:
 
 ```js
-import * as hmUI from '@zos/ui'
-import { Time } from '@zos/sensor'
-import { createTimer, stopTimer } from '@zos/timer'
-
 WatchFace({
-  build() { /* create every widget; start the date + Vault Boy timers */ },
-  updateDate() { /* refresh the per-digit date from the Time sensor */ },
-  onDestroy() { /* stop both timers */ },
+  build()        { /* create every widget; register sensor onChange + a WIDGET_DELEGATE; onResume() */ },
+  onResume()     { /* (re)start the refresh + Vault Boy timers — skips the walk in AOD */ },
+  onPause()      { /* stop the timers while the face is hidden (battery) */ },
+  updateGauges() { /* set each gauge IMG's src from its sensor fraction */ },
+  updateDate()   { /* refresh the per-digit date from the Time sensor */ },
+  onDestroy()    { /* onPause() + unsubscribe sensor onChange */ },
 })
 ```
 
 `build()` creates every widget once. Most widgets **auto-update from system data** via their
-`type: hmUI.data_type.*` binding — no JS needed for time, metrics, gauges, weather, battery, or
-day-of-week. Only two things need imperative code (a `createTimer` each), and both are stopped
-in `onDestroy()`:
+`type: hmUI.data_type.*` binding — no JS needed for time, metric *numbers*, weather, battery, or
+day-of-week. Three things are imperative:
 
 | Driver | What it does |
 |--------|--------------|
-| `updateDate()` (60 s timer + once at build) | Reads `Time.getDate()/getMonth()/getFullYear()`, zero-pads to `DDMMYYYY`, and sets each of the 8 per-digit date `IMG`s' `SRC` to the matching glyph (`0011`–`0020`). Per-digit (not `IMG_DATE`) keeps the digits pixel-aligned to the baked separator dots. |
+| `updateDate()` | Reads `Time.getDate()/getMonth()/getFullYear()`, zero-pads to `DDMMYYYY`, sets each of the 8 per-digit date `IMG`s' `SRC` (`0011`–`0020`). Per-digit (not `IMG_DATE`) keeps the digits pixel-aligned to the baked separator dots. |
+| `updateGauges()` | For each of the 4 gauges (a data-driven `GAUGES` table), reads its sensor fraction, maps to a 0–5 level, and sets the gauge `IMG`'s `SRC` to that fill sprite. Runs on sensor `onChange` + the refresh timer. |
 | Vault Boy timer (200 ms) | Cycles the Vault Boy `IMG`'s `SRC` through the 8 frames `0057`–`0064`. |
 
-Everything else (`IMG_TIME` hour/minute/second, the metric `TEXT_IMG`s, the gauge `IMG_LEVEL`s,
-weather, battery, `IMG_STATUS` icons) is declarative and bound by `data_type`/`system_status`.
+**Lifecycle / battery.** The refresh timer (60 s, drives `updateDate`+`updateGauges`) and the
+200 ms Vault Boy timer are created in `onResume()` and stopped in `onPause()` via a
+`WIDGET_DELEGATE` (`resume_call`/`pause_call`), so they don't run while the face is hidden;
+`onResume()` is also called once at the end of `build()` so the first paint/animation doesn't wait
+on the first resume event (idempotent via a `_running` guard). The walk animation is **skipped in
+AOD** (`getScreenType() === SCREEN_TYPE_AOD`). Risky sensor/router calls are wrapped in a small
+`safe()` helper.
+
+Everything else (`IMG_TIME` hour/minute/second, the metric `TEXT_IMG`s, weather, battery,
+`IMG_STATUS` icons) is declarative and bound by `data_type`/`system_status`. The four gauge bars
+are plain `IMG`s driven by `updateGauges()` (see the widget table below and finding #2).
 
 ## Widget inventory
 

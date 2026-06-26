@@ -1,12 +1,13 @@
 import * as hmUI from '@zos/ui'
 import { Time, Step, Calorie, Distance, HeartRate } from '@zos/sensor'
 import { createTimer, stopTimer } from '@zos/timer'
+import { getScreenType, SCREEN_TYPE_AOD } from '@zos/display'
 import {
   launchApp, SYSTEM_APP_STATUS, SYSTEM_APP_HR, SYSTEM_APP_WEATHER,
   SYSTEM_APP_CALENDAR, SYSTEM_APP_ALARM,
 } from '@zos/router'
 
-// Fonts / sprite groups (assets are in assets/balance2/, referenced by bare name).
+// ---- Asset groups (in assets/balance2/, referenced by bare name) ----
 const DATE_FONT = [
   '0011.png', '0012.png', '0013.png', '0014.png', '0015.png',
   '0016.png', '0017.png', '0018.png', '0019.png', '0020.png',
@@ -31,12 +32,15 @@ const VAULT_FRAMES = ['0057.png', '0058.png', '0059.png', '0060.png', '0061.png'
 // Date digits sit at these absolute x positions (snug to the baked separator dots), y=78.
 const DATE_X = [82, 94, 111, 123, 143, 155, 167, 179]
 
-// Gauge full-scale references (when a sensor goal isn't available).
+// Gauge full-scale references (fallbacks when a sensor goal isn't available).
 const CAL_GOAL = 300       // fallback active-kcal goal
 const STEP_GOAL = 8000     // fallback step goal
 const DIST_FULL_M = 10000  // distance bar full at ~10 km
 const HR_MIN = 40          // pulse bar maps linearly over [HR_MIN, HR_MAX]
 const HR_MAX = 180
+
+const VAULT_PERIOD = 200    // ms per Vault Boy frame
+const REFRESH_PERIOD = 60000 // ms between date/gauge refreshes
 
 const timeSensor = new Time()
 const stepSensor = new Step()
@@ -44,7 +48,25 @@ const calSensor = new Calorie()
 const distSensor = new Distance()
 const hrSensor = new HeartRate()
 
-const gaugeLevel = (frac) => Math.max(0, Math.min(5, Math.round((frac || 0) * 5)))
+// Run a fn, swallowing errors — sensor/router calls can throw if unsupported / not ready.
+const safe = (fn) => {
+  try { return fn() } catch (e) { /* non-fatal */ }
+}
+
+// Map a 0..1 fraction to a sprite index in [0, n-1].
+const gaugeLevel = (frac, n) => {
+  const max = n - 1
+  return Math.max(0, Math.min(max, Math.round((frac || 0) * max)))
+}
+
+// Each gauge: position, its fill sprites (empty→full), and how to read its 0..1 fraction.
+// Same source as the displayed number, so the bar always tracks what the user reads.
+const GAUGES = [
+  { x: 90, y: 159, bars: CAL_BARS, frac: () => calSensor.getCurrent() / (calSensor.getTarget() || CAL_GOAL) },
+  { x: 73, y: 224, bars: PULSE_BARS, frac: () => ((hrSensor.getCurrent() || hrSensor.getLast() || 0) - HR_MIN) / (HR_MAX - HR_MIN) },
+  { x: 90, y: 286, bars: DIST_BARS, frac: () => distSensor.getCurrent() / DIST_FULL_M },
+  { x: 194, y: 349, bars: STEP_BARS, frac: () => stepSensor.getCurrent() / (stepSensor.getTarget() || STEP_GOAL) },
+]
 
 WatchFace({
   build() {
@@ -71,7 +93,7 @@ WatchFace({
     })
     hmUI.createWidget(hmUI.widget.IMG, { x: 394, y: 78, src: '0023.png' }) // degree °
 
-    // ---- Vault Boy (animated) ----
+    // ---- Vault Boy (animated; frames cycled by the timer while visible) ----
     this._vault = hmUI.createWidget(hmUI.widget.IMG, { x: 195, y: 130, src: VAULT_FRAMES[0] })
 
     // ---- Time: hours/minutes (big) + seconds (small), auto-bound ----
@@ -81,7 +103,7 @@ WatchFace({
       second_startX: 371, second_startY: 348, second_array: DATE_FONT, second_zero: 1, second_align: hmUI.align.LEFT,
     })
 
-    // ---- Activity metrics (auto-bound) ----
+    // ---- Activity metric numbers (auto-bound) ----
     hmUI.createWidget(hmUI.widget.TEXT_IMG, {
       x: 17, y: 149, w: 72, h: 24, font_array: METRIC_FONT, h_space: -3,
       align_h: hmUI.align.RIGHT, type: hmUI.data_type.CAL,
@@ -99,14 +121,11 @@ WatchFace({
       align_h: hmUI.align.CENTER_H, type: hmUI.data_type.STEP,
     })
 
-    // ---- Gauge bars: plain IMG whose src is swapped to the right fill sprite in updateGauges().
-    //      Uses the proven IMG + setProperty(SRC) path (same as the Vault Boy), so it always
-    //      renders the green-bordered bar (level 0 = empty frame) — never a black box. The
-    //      level tracks the sensor value. (IMG_LEVEL type-binding mis-mapped / didn't render.)
-    this._gCal = hmUI.createWidget(hmUI.widget.IMG, { x: 90, y: 159, src: CAL_BARS[0] })
-    this._gPulse = hmUI.createWidget(hmUI.widget.IMG, { x: 73, y: 224, src: PULSE_BARS[0] })
-    this._gDist = hmUI.createWidget(hmUI.widget.IMG, { x: 90, y: 286, src: DIST_BARS[0] })
-    this._gStep = hmUI.createWidget(hmUI.widget.IMG, { x: 194, y: 349, src: STEP_BARS[0] })
+    // ---- Gauge bars: plain IMG, src swapped in updateGauges() (always framed — see
+    //      docs/ZEPPOS-FINDINGS.md #2). Level tracks the sensor; level 0 = empty frame. ----
+    this._gauges = GAUGES.map((g) =>
+      hmUI.createWidget(hmUI.widget.IMG, { x: g.x, y: g.y, src: g.bars[0] })
+    )
 
     // ---- Battery (auto-bound) + % glyph ----
     hmUI.createWidget(hmUI.widget.TEXT_IMG, {
@@ -120,16 +139,12 @@ WatchFace({
     hmUI.createWidget(hmUI.widget.IMG_STATUS, { x: 351, y: 368, src: '0052.png', type: hmUI.system_status.LOCK })
     hmUI.createWidget(hmUI.widget.IMG_STATUS, { x: 405, y: 366, src: '0055.png', type: hmUI.system_status.CLOCK })
 
-    // ---- Tap-to-launch shortcuts ----
-    // Invisible BUTTON overlays (hit area = w*h regardless of the transparent src). Created
-    // last so they sit on top and receive touches. Each opens its relevant system app.
+    // ---- Tap-to-launch shortcuts (invisible overlays; created last so they capture touches) ----
     const tapZone = (x, y, w, h, appId) =>
       hmUI.createWidget(hmUI.widget.BUTTON, {
         x, y, w, h, text: '',
         normal_src: 'transparent.png', press_src: 'transparent.png',
-        click_func: () => {
-          try { launchApp({ appId, native: true }) } catch (e) { console.log('launchApp failed', e) }
-        },
+        click_func: () => safe(() => launchApp({ appId, native: true })),
       })
     tapZone(300, 70, 135, 44, SYSTEM_APP_WEATHER)    // weather icon + temperature
     tapZone(78, 72, 120, 32, SYSTEM_APP_CALENDAR)    // date DD.MM.YYYY
@@ -138,47 +153,58 @@ WatchFace({
     tapZone(10, 210, 140, 34, SYSTEM_APP_HR)         // pulse -> Heart Rate
     tapZone(5, 272, 160, 34, SYSTEM_APP_STATUS)      // distance -> Activity
     tapZone(185, 345, 110, 52, SYSTEM_APP_STATUS)    // steps -> Activity
-    // battery -> battery page: a firmware "jumpable shortcut" (IMG_CLICK + data_type.BATTERY)
-    // auto-opens the battery screen; there's no SYSTEM_APP_BATTERY to launchApp.
+    // battery -> battery page: a firmware "jumpable shortcut" (no SYSTEM_APP_BATTERY exists).
     hmUI.createWidget(hmUI.widget.IMG_CLICK, { x: 40, y: 372, w: 120, h: 34, type: hmUI.data_type.BATTERY })
 
-    // ---- Dynamic bits: date refresh + Vault Boy walk cycle ----
-    this.updateDate()
-    this._dateTimer = createTimer(0, 60000, () => { this.updateDate(); this.updateGauges() })
-
-    this._vaultIndex = 0
-    this._vaultTimer = createTimer(0, 200, () => {
-      this._vaultIndex = (this._vaultIndex + 1) % VAULT_FRAMES.length
-      this._vault.setProperty(hmUI.prop.SRC, VAULT_FRAMES[this._vaultIndex])
-    })
-
-    // ---- Gauges: set levels from the sensors, refresh on change + with the date timer ----
-    this.updateGauges()
+    // ---- Refresh gauges when the activity sensors change (cheap, event-driven) ----
     this._onGauge = () => this.updateGauges()
-    try { stepSensor.onChange(this._onGauge) } catch (e) {}
-    try { calSensor.onChange(this._onGauge) } catch (e) {}
-    try { distSensor.onChange(this._onGauge) } catch (e) {}
+    safe(() => stepSensor.onChange(this._onGauge))
+    safe(() => calSensor.onChange(this._onGauge))
+    safe(() => distSensor.onChange(this._onGauge))
+
+    // The periodic refresh + walk animation run only while the face is visible (battery / AOD).
+    // resume_call/pause_call fire on show/hide; we also resume now so the first paint + walk
+    // don't wait on the first resume event.
+    hmUI.createWidget(hmUI.widget.WIDGET_DELEGATE, {
+      resume_call: () => this.onResume(),
+      pause_call: () => this.onPause(),
+    })
+    safe(() => this.onResume())
+  },
+
+  // Start the periodic timers + walk cycle (idempotent). Skips the animation in AOD.
+  onResume() {
+    if (this._running) return
+    this._running = true
+    this.updateDate()
+    this.updateGauges()
+    if (!this._refreshTimer) {
+      this._refreshTimer = createTimer(0, REFRESH_PERIOD, () => {
+        this.updateDate()
+        this.updateGauges()
+      })
+    }
+    if (!this._vaultTimer && safe(() => getScreenType()) !== SCREEN_TYPE_AOD) {
+      this._vaultIndex = 0
+      this._vaultTimer = createTimer(0, VAULT_PERIOD, () => {
+        if (safe(() => getScreenType()) === SCREEN_TYPE_AOD) return
+        this._vaultIndex = (this._vaultIndex + 1) % VAULT_FRAMES.length
+        this._vault.setProperty(hmUI.prop.SRC, VAULT_FRAMES[this._vaultIndex])
+      })
+    }
+  },
+
+  // Stop the timers when the face is hidden (saves battery; no animation off-screen).
+  onPause() {
+    this._running = false
+    if (this._refreshTimer) { stopTimer(this._refreshTimer); this._refreshTimer = undefined }
+    if (this._vaultTimer) { stopTimer(this._vaultTimer); this._vaultTimer = undefined }
   },
 
   updateGauges() {
-    const setBar = (gauge, bars, frac) => {
-      try { gauge.setProperty(hmUI.prop.SRC, bars[gaugeLevel(frac)]) } catch (e) {}
-    }
-    try {
-      const calT = calSensor.getTarget() || CAL_GOAL
-      setBar(this._gCal, CAL_BARS, calSensor.getCurrent() / calT)
-    } catch (e) {}
-    try {
-      const hr = hrSensor.getCurrent() || hrSensor.getLast() || 0
-      setBar(this._gPulse, PULSE_BARS, (hr - HR_MIN) / (HR_MAX - HR_MIN))
-    } catch (e) {}
-    try {
-      setBar(this._gDist, DIST_BARS, distSensor.getCurrent() / DIST_FULL_M)
-    } catch (e) {}
-    try {
-      const stepT = stepSensor.getTarget() || STEP_GOAL
-      setBar(this._gStep, STEP_BARS, stepSensor.getCurrent() / stepT)
-    } catch (e) {}
+    GAUGES.forEach((g, i) =>
+      safe(() => this._gauges[i].setProperty(hmUI.prop.SRC, g.bars[gaugeLevel(g.frac(), g.bars.length)]))
+    )
   },
 
   updateDate() {
@@ -192,12 +218,11 @@ WatchFace({
   },
 
   onDestroy() {
-    if (this._dateTimer) stopTimer(this._dateTimer)
-    if (this._vaultTimer) stopTimer(this._vaultTimer)
+    this.onPause()
     if (this._onGauge) {
-      try { stepSensor.offChange(this._onGauge) } catch (e) {}
-      try { calSensor.offChange(this._onGauge) } catch (e) {}
-      try { distSensor.offChange(this._onGauge) } catch (e) {}
+      safe(() => stepSensor.offChange(this._onGauge))
+      safe(() => calSensor.offChange(this._onGauge))
+      safe(() => distSensor.offChange(this._onGauge))
     }
   },
 })
